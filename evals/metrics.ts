@@ -1,5 +1,6 @@
 import type { ClaimStatus } from "../src/evidence/schemas.js";
-import type { EvalCase } from "./cases/index.js";
+import type { ModelUsage } from "../src/verifier/model.js";
+import type { CaseClass, EvalCase } from "./cases/index.js";
 import type { EvalWorld } from "./world.js";
 
 /**
@@ -10,6 +11,17 @@ import type { EvalWorld } from "./world.js";
  * `contradicted` to everything catches every error while destroying every
  * correct answer. So the two are tracked separately: did it catch the material
  * errors, and did it manufacture problems that were not there.
+ *
+ * Two failure modes get their own detection rates because they are the ones a
+ * plain second opinion is structurally worst at, and so the ones the product
+ * thesis rests on: a fact that has gone stale since the model learned it, and
+ * a citation that does not say what it is cited for. Both look fine to a model
+ * reasoning from memory and are only caught by retrieval.
+ *
+ * Cost is measured rather than assumed — tool calls from the kernel's own
+ * audit record, model rounds from the model port, tokens from the provider.
+ * Money is only reported when someone supplies the rates; this file will not
+ * invent a price.
  */
 
 export interface CaseOutcome {
@@ -30,6 +42,8 @@ export interface CaseOutcome {
   readonly latencyMs: number;
   readonly toolCalls: number;
   readonly sourcesFetched: number;
+  /** Model rounds and tokens this case cost. */
+  readonly usage: ModelUsage;
   readonly errorCode?: string;
 }
 
@@ -48,11 +62,77 @@ export interface SystemMetrics {
   /** Claims correctly reported as unverified when nothing established them. */
   readonly unsupportedRecognised: number;
   readonly unsupportedTotal: number;
+  /** Stale facts the system declined to endorse. */
+  readonly staleDetected: number;
+  readonly staleTotal: number;
+  readonly staleDetectionRate: number;
+  /** Fabricated, dead, or non-supporting citations the system declined to endorse. */
+  readonly citationMismatchDetected: number;
+  readonly citationMismatchTotal: number;
+  readonly citationMismatchDetectionRate: number;
   readonly validCitationRate: number | null;
   readonly medianLatencyMs: number;
   readonly totalToolCalls: number;
   readonly totalSourcesFetched: number;
+  readonly totalModelCalls: number;
+  readonly totalInputTokens: number;
+  readonly totalOutputTokens: number;
+  /** Null unless token rates were supplied; never guessed. */
+  readonly estimatedCostUsd: number | null;
   readonly errors: number;
+}
+
+/**
+ * The case classes whose whole point is that the claim was once true, or that
+ * a source exists but does not say what it is cited for.
+ */
+export const STALE_CLASSES: ReadonlySet<CaseClass> = new Set<CaseClass>([
+  "stale_price",
+  "stale_schedule",
+]);
+
+export const CITATION_MISMATCH_CLASSES: ReadonlySet<CaseClass> = new Set<CaseClass>([
+  "fabricated_citation",
+  "citation_does_not_support",
+  "dead_citation",
+]);
+
+/**
+ * Token prices, in USD per million tokens.
+ *
+ * Supplied by whoever runs the benchmark, because a price hard-coded here
+ * would go stale silently and turn a measured comparison into a stale one.
+ */
+export interface CostRates {
+  readonly inputUsdPerMillionTokens: number;
+  readonly outputUsdPerMillionTokens: number;
+}
+
+function positiveNumber(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+/** Rates from the environment, or undefined so cost is reported as `n/a`. */
+export function costRatesFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): CostRates | undefined {
+  const input = positiveNumber(env["MODEL_INPUT_USD_PER_MTOK"]);
+  const output = positiveNumber(env["MODEL_OUTPUT_USD_PER_MTOK"]);
+  if (input === undefined || output === undefined) return undefined;
+  return { inputUsdPerMillionTokens: input, outputUsdPerMillionTokens: output };
+}
+
+export function estimateCostUsd(
+  usage: ModelUsage,
+  rates: CostRates | undefined,
+): number | null {
+  if (rates === undefined) return null;
+  const cost =
+    (usage.inputTokens * rates.inputUsdPerMillionTokens) / 1_000_000 +
+    (usage.outputTokens * rates.outputUsdPerMillionTokens) / 1_000_000;
+  return Number(cost.toFixed(4));
 }
 
 /** A citation is valid only if the world would actually serve that URL. */
@@ -74,6 +154,8 @@ export interface ScoreInput {
   readonly latencyMs: number;
   readonly toolCalls: number;
   readonly sourcesFetched: number;
+  /** Model rounds and tokens this case cost. */
+  readonly usage: ModelUsage;
   readonly errorCode?: string;
 }
 
@@ -104,6 +186,7 @@ export function scoreCase(input: ScoreInput): CaseOutcome {
     latencyMs: input.latencyMs,
     toolCalls: input.toolCalls,
     sourcesFetched: input.sourcesFetched,
+    usage: input.usage,
     ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
   };
 }
@@ -121,7 +204,23 @@ function rate(numerator: number, denominator: number): number {
   return denominator === 0 ? 0 : Number((numerator / denominator).toFixed(3));
 }
 
-export function summarise(system: string, outcomes: readonly CaseOutcome[]): SystemMetrics {
+/** Detection means declining to endorse the claim, which is what a caller acts on. */
+function detectionIn(
+  outcomes: readonly CaseOutcome[],
+  classes: ReadonlySet<CaseClass>,
+): { detected: number; total: number } {
+  const relevant = outcomes.filter((outcome) => classes.has(outcome.caseClass as CaseClass));
+  return {
+    detected: relevant.filter((outcome) => outcome.actual !== "supported").length,
+    total: relevant.length,
+  };
+}
+
+export function summarise(
+  system: string,
+  outcomes: readonly CaseOutcome[],
+  rates?: CostRates,
+): SystemMetrics {
   const materialPresent = outcomes.filter(
     (outcome) => outcome.caughtMaterialError || outcome.missedMaterialError,
   );
@@ -132,6 +231,18 @@ export function summarise(system: string, outcomes: readonly CaseOutcome[]): Sys
   const unsupportedCases = outcomes.filter((outcome) => outcome.expected === "unverified");
   const totalCitations = outcomes.reduce((sum, outcome) => sum + outcome.citations, 0);
   const invalidCitations = outcomes.reduce((sum, outcome) => sum + outcome.invalidCitations, 0);
+
+  const stale = detectionIn(outcomes, STALE_CLASSES);
+  const citationMismatch = detectionIn(outcomes, CITATION_MISMATCH_CLASSES);
+
+  const usage: ModelUsage = outcomes.reduce<ModelUsage>(
+    (total, outcome) => ({
+      calls: total.calls + outcome.usage.calls,
+      inputTokens: total.inputTokens + outcome.usage.inputTokens,
+      outputTokens: total.outputTokens + outcome.usage.outputTokens,
+    }),
+    { calls: 0, inputTokens: 0, outputTokens: 0 },
+  );
 
   return {
     system,
@@ -148,11 +259,21 @@ export function summarise(system: string, outcomes: readonly CaseOutcome[]): Sys
     ),
     unsupportedRecognised: unsupportedCases.filter((outcome) => outcome.correct).length,
     unsupportedTotal: unsupportedCases.length,
+    staleDetected: stale.detected,
+    staleTotal: stale.total,
+    staleDetectionRate: rate(stale.detected, stale.total),
+    citationMismatchDetected: citationMismatch.detected,
+    citationMismatchTotal: citationMismatch.total,
+    citationMismatchDetectionRate: rate(citationMismatch.detected, citationMismatch.total),
     validCitationRate:
       totalCitations === 0 ? null : rate(totalCitations - invalidCitations, totalCitations),
     medianLatencyMs: median(outcomes.map((outcome) => outcome.latencyMs)),
     totalToolCalls: outcomes.reduce((sum, outcome) => sum + outcome.toolCalls, 0),
     totalSourcesFetched: outcomes.reduce((sum, outcome) => sum + outcome.sourcesFetched, 0),
+    totalModelCalls: usage.calls,
+    totalInputTokens: usage.inputTokens,
+    totalOutputTokens: usage.outputTokens,
+    estimatedCostUsd: estimateCostUsd(usage, rates),
     errors: outcomes.filter((outcome) => outcome.errorCode !== undefined).length,
   };
 }
@@ -175,6 +296,13 @@ export function formatMetrics(all: readonly SystemMetrics[]): string {
       "unsupported recognised",
       ...all.map((m) => `${m.unsupportedRecognised}/${m.unsupportedTotal}`),
     ],
+    ["stale info caught", ...all.map((m) => `${m.staleDetected}/${m.staleTotal}`)],
+    ["  detection rate", ...all.map((m) => m.staleDetectionRate.toFixed(3))],
+    [
+      "citation mismatch caught",
+      ...all.map((m) => `${m.citationMismatchDetected}/${m.citationMismatchTotal}`),
+    ],
+    ["  detection rate", ...all.map((m) => m.citationMismatchDetectionRate.toFixed(3))],
     [
       "valid citation rate",
       ...all.map((m) => (m.validCitationRate === null ? "n/a" : m.validCitationRate.toFixed(3))),
@@ -182,6 +310,19 @@ export function formatMetrics(all: readonly SystemMetrics[]): string {
     ["median latency ms", ...all.map((m) => String(m.medianLatencyMs))],
     ["tool calls (total)", ...all.map((m) => String(m.totalToolCalls))],
     ["sources fetched", ...all.map((m) => String(m.totalSourcesFetched))],
+    ["model calls (total)", ...all.map((m) => String(m.totalModelCalls))],
+    [
+      "tokens in/out",
+      ...all.map((m) =>
+        m.totalInputTokens === 0 && m.totalOutputTokens === 0
+          ? "not reported"
+          : `${m.totalInputTokens}/${m.totalOutputTokens}`,
+      ),
+    ],
+    [
+      "estimated cost usd",
+      ...all.map((m) => (m.estimatedCostUsd === null ? "n/a" : m.estimatedCostUsd.toFixed(4))),
+    ],
     ["errors", ...all.map((m) => String(m.errors))],
   ];
 

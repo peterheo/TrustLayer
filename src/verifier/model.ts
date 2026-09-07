@@ -61,6 +61,37 @@ export interface VerifierModelSession {
   next(observation: ModelObservation, signal: AbortSignal): Promise<ModelStep>;
 }
 
+/**
+ * What a run cost, where the provider reports it.
+ *
+ * Measured, never estimated: `calls` counts requests actually issued and the
+ * token counts come from the provider's own accounting. A provider that does
+ * not report usage leaves the token fields at zero rather than guessing, and
+ * anything downstream that turns tokens into money has to supply the rate
+ * itself — a price hard-coded here would be a number nobody measured.
+ */
+export interface ModelUsage {
+  readonly calls: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+}
+
+export const ZERO_USAGE: ModelUsage = { calls: 0, inputTokens: 0, outputTokens: 0 };
+
+/** Implemented by models that can report what they spent. */
+export interface UsageReporting {
+  readonly usage: ModelUsage;
+}
+
+export function reportsUsage(value: unknown): value is UsageReporting {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "usage" in value &&
+    typeof (value as { usage: unknown }).usage === "object"
+  );
+}
+
 export interface VerifierModel {
   readonly id: string;
   start(request: ModelTurnRequest, signal: AbortSignal): Promise<VerifierModelSession>;
@@ -135,19 +166,40 @@ interface AnthropicMessage {
  * audit trail or acquire an evidence ID — which would make it useless as
  * evidence and invisible to the receipt.
  */
-export class AnthropicVerifierModel implements VerifierModel {
+export class AnthropicVerifierModel implements VerifierModel, UsageReporting {
   readonly id = "anthropic";
   readonly #apiKey: string;
   readonly #model: string;
+  /** Cumulative across every session this instance has started. */
+  #usage: ModelUsage = ZERO_USAGE;
 
   constructor(apiKey: string, model: string) {
     this.#apiKey = apiKey;
     this.#model = model;
   }
 
+  get usage(): ModelUsage {
+    return this.#usage;
+  }
+
+  #record(usage: unknown): void {
+    const record =
+      typeof usage === "object" && usage !== null ? (usage as Record<string, unknown>) : {};
+    const input = typeof record["input_tokens"] === "number" ? record["input_tokens"] : 0;
+    const output = typeof record["output_tokens"] === "number" ? record["output_tokens"] : 0;
+    this.#usage = {
+      calls: this.#usage.calls + 1,
+      inputTokens: this.#usage.inputTokens + input,
+      outputTokens: this.#usage.outputTokens + output,
+    };
+  }
+
   async start(request: ModelTurnRequest): Promise<VerifierModelSession> {
     const apiKey = this.#apiKey;
     const model = this.#model;
+    const record = (usage: unknown): void => {
+      this.#record(usage);
+    };
     const messages: AnthropicMessage[] = [];
 
     // Wire names cannot contain dots; map back so SharedOS sees real names.
@@ -212,7 +264,11 @@ export class AnthropicVerifierModel implements VerifierModel {
           throw new TrustLayerError("MODEL_FAILURE", `anthropic status ${response.status}`);
         }
 
-        const body = (await response.json()) as { content?: readonly AnthropicContentBlock[] };
+        const body = (await response.json()) as {
+          content?: readonly AnthropicContentBlock[];
+          usage?: unknown;
+        };
+        record(body.usage);
         const content = body.content ?? [];
         messages.push({ role: "assistant", content });
 

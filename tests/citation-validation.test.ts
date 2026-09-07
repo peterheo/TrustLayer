@@ -85,8 +85,128 @@ describe("candidate citation validation", () => {
     const receipt = await verify(request, { host: host(), model });
 
     expect(receipt.evidence[0]?.origin).toBe("independent");
-    // A candidate URL was supplied but never retrieved, so nothing was checked.
-    expect(receipt.checks.candidateCitationsChecked).toBe(false);
+    // The model ignored the caller's own source, so the host went and got it.
+    expect(receipt.evidence.map((entry) => entry.origin)).toContain("candidate_citation");
+    expect(receipt.checks.candidateCitationsChecked).toBe(true);
+  });
+
+  /**
+   * Checking the sources a candidate cited is the host's job.
+   *
+   * Leaving it to the model made `candidateCitationsChecked` a report on the
+   * model's willingness rather than on what was retrieved, and a candidate
+   * that cites a page which does not support its claim is one of the failure
+   * modes the product exists to catch — so the host chases them itself when
+   * research ends with any still unchecked.
+   */
+  describe("the host chases unchecked citations itself", () => {
+    it("retrieves a citation the model declined to look at", async () => {
+      stubPages();
+      const model = new ScriptedVerifierModel([
+        PLAN_STEP,
+        searchStep("Widget X price", "call-1"),
+        RESEARCH_DONE,
+        searchStep("Widget X price change", "call-2"),
+        CHALLENGE_DONE,
+        adjudicateStep(),
+      ]);
+
+      const receipt = await verify(request, { host: host(), model });
+
+      const candidate = receipt.evidence.find((entry) => entry.origin === "candidate_citation");
+      expect(candidate?.url).toBe(CANDIDATE_URL);
+      expect(receipt.checks.candidateCitationsChecked).toBe(true);
+      // Retrieved through the same tool boundary as any other fetch.
+      expect(receipt.provenance.toolsUsed).toContain("research.fetch");
+    });
+
+    it("still runs the contradiction search after chasing citations", async () => {
+      stubPages();
+      const model = new ScriptedVerifierModel([
+        PLAN_STEP,
+        searchStep("Widget X price", "call-1"),
+        RESEARCH_DONE,
+        searchStep("Widget X price change", "call-2"),
+        CHALLENGE_DONE,
+        adjudicateStep(),
+      ]);
+
+      const receipt = await verify(request, { host: host(), model });
+
+      // Forcing a citation check must not cost the challenge round: a receipt
+      // that checked the candidate's sources but skipped contradiction hunting
+      // would be a worse trade than the one it replaced.
+      expect(receipt.checks.contradictionSearchPerformed).toBe(true);
+      expect(receipt.protocolStatus).toBe("complete");
+    });
+
+    it("does not re-fetch a citation the model already checked", async () => {
+      stubPages();
+      const model = new ScriptedVerifierModel([
+        PLAN_STEP,
+        fetchStep(CANDIDATE_URL, "call-1"),
+        RESEARCH_DONE,
+        searchStep("Widget X price", "call-2"),
+        CHALLENGE_DONE,
+        adjudicateStep(),
+      ]);
+
+      const receipt = await verify(request, { host: host(), model });
+
+      expect(receipt.evidence).toHaveLength(1);
+      expect(receipt.evidence[0]?.origin).toBe("candidate_citation");
+    });
+
+    it("reports a dead citation honestly rather than as a check that passed", async () => {
+      vi.stubGlobal("fetch", async () => new Response("gone", { status: 404 }));
+
+      const model = new ScriptedVerifierModel([
+        PLAN_STEP,
+        searchStep("Widget X price", "call-1"),
+        RESEARCH_DONE,
+        searchStep("Widget X price change", "call-2"),
+        CHALLENGE_DONE,
+        adjudicateStep(),
+      ]);
+
+      const receipt = await verify(request, { host: host(), model });
+
+      // The host tried, the URL is dead, and nothing became evidence. The
+      // check reports what was retrieved, not what was attempted.
+      expect(receipt.evidence).toHaveLength(0);
+      expect(receipt.checks.candidateCitationsChecked).toBe(false);
+    });
+
+    it("bounds how many citations one caller can make the host fetch", async () => {
+      stubPages();
+      const model = new ScriptedVerifierModel([
+        PLAN_STEP,
+        searchStep("Widget X price", "call-1"),
+        RESEARCH_DONE,
+        searchStep("Widget X price change", "call-2"),
+        CHALLENGE_DONE,
+        adjudicateStep(),
+      ]);
+
+      const receipt = await verify(
+        {
+          ...request,
+          sourceUrls: [
+            "https://candidate.example/one",
+            "https://candidate.example/two",
+            "https://candidate.example/three",
+            "https://candidate.example/four",
+            "https://candidate.example/five",
+          ],
+        },
+        { host: host(), model },
+      );
+
+      // Exactly three: the cap, not the caller's five, and not zero.
+      expect(receipt.evidence).toHaveLength(3);
+      expect(receipt.evidence.every((entry) => entry.origin === "candidate_citation")).toBe(true);
+      expect(receipt.checks.contradictionSearchPerformed).toBe(true);
+    });
   });
 
   it("distinguishes both origins within one receipt", async () => {
