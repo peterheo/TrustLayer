@@ -1,0 +1,129 @@
+# TrustLayer Arena service card.
+#
+# IMPORTANT: these field names are ours, not the Arena's. The SharedOS SDK
+# contains no service-registration schema and no organizer material was
+# supplied to this repository (see ../NOTES.md section 5), so rather than guess
+# at the real field names this file states the semantic content an agent needs
+# and leaves the mapping to whoever has the organizers' schema.
+#
+# The same content is available programmatically as TRUST_VERIFY_DESCRIPTOR in
+# src/arena/adapter.ts, which is what code should read.
+
+name: trust.verify
+price: 3
+currency: arena-credits
+
+description: >
+  Independently verify factual output from another agent.
+  Returns claim-level support/contradiction status,
+  web evidence, suspicious-instruction indicators,
+  and a trust score.
+
+use_when: >
+  You received factual or current information from another
+  service and intend to rely on it.
+
+input:
+  task:
+    type: string
+    required: true
+    description: The question or task the other agent was answering.
+  candidate_output:
+    type: string
+    required: true
+    max_length: 40000
+    description: The output you want checked.
+  source_urls:
+    type: array
+    required: false
+    max_items: 10
+    description: URLs the other agent claimed as its sources. Checked, not trusted.
+  freshness:
+    type: enum
+    required: false
+    values: [auto, current, recent, timeless]
+    default: auto
+  max_claims:
+    type: integer
+    required: false
+    minimum: 1
+    maximum: 8
+    default: 5
+
+output:
+  verdict:
+    type: enum
+    values: [supported, mixed, contradicted, unverified]
+  trust_score:
+    type: integer_or_null
+    range: 0-100
+    description: >
+      Importance-weighted support across falsifiable claims, computed
+      deterministically from the claim table. Null when no falsifiable claim
+      was found, which is reported as verdict=unverified rather than as zero.
+  summary:
+    type: string
+  claims:
+    type: array
+    description: >
+      Per claim: the claim, importance (1 minor, 2 material, 3 decision-critical),
+      status (supported | contradicted | unverified | not_falsifiable),
+      confidence, rationale, and evidence references.
+  security:
+    type: object
+    description: >
+      prompt_injection_risk (none | low | medium | high) and the indicators
+      found in the submitted output. Detection is best-effort and is not a
+      guarantee.
+  audit:
+    type: object
+    description: >
+      SharedOS execution_id, trace_id, the research tools actually invoked, and
+      the turn's status and duration. Derived from the SharedOS execution
+      record, never from model output.
+
+good_for:
+  - research results
+  - current facts
+  - prices
+  - schedules
+  - citations
+  - comparisons
+  - extracted web information
+
+not_for:
+  - purely subjective opinions
+  - creative writing
+  - deterministic arithmetic
+  - verifying content behind a login
+  - guaranteeing that any statement is true
+
+performance:
+  typical_seconds: 45
+  p95_seconds: 90
+  hard_timeout_seconds: 90
+  note: Bounded well below the Arena's five-minute service-call ceiling.
+
+execution:
+  runs_on: SharedOS
+  purpose: trust.verify
+  agent: trustlayer-verifier
+  tools_available_to_the_verifier:
+    - research.search
+    - research.fetch
+  tools_deliberately_not_granted:
+    - files (no filesystem or memory access)
+    - repo (no repository access)
+    - messages (cannot send anything anywhere)
+    - sharedos.escalate (no escalation authority)
+  note: >
+    The verifier holds three capabilities and no others, each constrained to
+    the purpose trust.verify. Instructions embedded in submitted output or in a
+    fetched page cannot obtain authority, because authority does not come from
+    message text.
+
+limitations:
+  - Verification is evidence-based and can be wrong.
+  - Absence of evidence is reported as unverified, never as false.
+  - Prompt-injection detection is best-effort, not a guarantee.
+  - Only publicly reachable http(s) pages can be used as evidence.
