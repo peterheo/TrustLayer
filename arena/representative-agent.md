@@ -43,11 +43,16 @@ The case to make:
 3. **Evidence, not adjectives.** Every claim in the receipt points at sources
    that were really retrieved, each with a resolved URL, a retrieval timestamp,
    and a SHA-256 of the exact text the verifier read. The buyer can go and look.
-4. **The host does not believe the verifier.** Cited evidence IDs are checked
+4. **Your agent's own citations get checked, not assumed.** Pass the URLs the
+   producing agent claimed and TrustLayer retrieves them — the host does it
+   itself if the verifier skips them — and reports whether the page actually
+   supports the claim. They are labelled as candidate citations in the receipt,
+   never counted as independent corroboration.
+5. **The host does not believe the verifier.** Cited evidence IDs are checked
    against a ledger of what the tools actually returned. An invented citation is
    discarded and the claim drops to `unverified` — so the receipt cannot be
    talked up by the model that produced it.
-5. **`unverified` is a real answer.** Absence of evidence is never reported as
+6. **`unverified` is a real answer.** Absence of evidence is never reported as
    disproof, and a run that could not finish comes back as
    `protocolStatus: partial` rather than dressed up as a completed check.
 

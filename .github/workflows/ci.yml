@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# The whole suite is hermetic — scripted models, injected DNS and fetch — so
+# CI needs no secrets and no network beyond installing dependencies.
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the engines field; the SDK requires >=20.11.
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      - run: pnpm test
+
+      # The offline demos and the benchmark harness are part of the product
+      # surface, so a change that breaks them should fail here rather than in
+      # front of whoever runs them next.
+      - run: pnpm smoke
+      - run: pnpm demo:injection
+      - run: pnpm eval --selftest

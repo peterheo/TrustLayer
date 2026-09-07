@@ -140,6 +140,13 @@ Everything the receipt presents as fact is produced elsewhere:
   records whether a fetch was of a caller-supplied citation or an
   independently discovered source, so a candidate's own source can never be
   presented as independent verification.
+- **The caller's own citations are chased by the host.** If the verifier
+  declares research finished with any supplied `sourceUrls` still unfetched,
+  the host retrieves them itself — through the same SharedOS tool boundary,
+  capped at three and never at the cost of the contradiction search — and hands
+  the verifier the contents as data to judge. So
+  `checks.candidateCitationsChecked` reports what was retrieved rather than
+  whether the model felt like looking.
 - **Citations are validated** against that ledger. Invented IDs are discarded;
   a `supported` or `contradicted` claim with no surviving citation of the right
   relation is downgraded to `unverified` — never to `contradicted`, because
@@ -260,7 +267,7 @@ body runs.
 ## Tests
 
 ```
-pnpm test        # 187 tests
+pnpm test        # 192 tests
 pnpm typecheck
 ```
 
@@ -270,7 +277,7 @@ pnpm typecheck
 | `verification-behaviour.test.ts` | supported / contradicted / unverified / mixed / not-falsifiable, stale facts, conflicting sources, focus claims |
 | `evidence-ledger.test.ts` | candidates are not evidence, host-minted provenance, candidate-citation origin, per-execution isolation |
 | `receipt-validator.test.ts` | fabricated IDs discarded, downgrades, wrong-relation citations, unadjudicated claims |
-| `citation-validation.test.ts` | caller-supplied sources fetched and labelled, dead citations, `candidateCitationsChecked` |
+| `citation-validation.test.ts` | caller-supplied sources labelled and chased by the host, dead citations, the fetch cap, `candidateCitationsChecked` |
 | `protocol.test.ts` | phase accounting, `protocolStatus`, `overallStatus`, checks that a model's summary cannot influence |
 | `permissions.test.ts` | the three gates; forbidden tools refused; missing execution grant; wrong purpose; exact fetch authorization |
 | `research-tools.test.ts` | search-vs-fetch boundary, redirect revalidation, sanitization, dead URLs, headers |
@@ -278,6 +285,9 @@ pnpm typecheck
 | `injection.test.ts` | quarantine behaviour, injection from candidate output and from a fetched page |
 | `arena.test.ts` | both service entry points, payload aliasing, error shape, descriptors advertise no trust score |
 | `evals.test.ts` | the benchmark corpus, world, and metrics — including that degenerate strategies score badly |
+
+CI runs the typecheck, the suite, both demos and the benchmark selftest on
+every push — all of it offline, so it needs no secrets.
 
 The suite is hermetic: the model is scripted and DNS and `fetch` are injected,
 so no test touches the network. That is also what lets the tests script a model

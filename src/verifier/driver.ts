@@ -16,6 +16,7 @@ import {
 import type { EvidenceLedger } from "../evidence/ledger.js";
 import type { ModelObservation, ModelSubmissionSpec, VerifierModel } from "./model.js";
 import { hasFocusClaims, parsePlanSubmission, planFromDraft, planFromFocusClaims } from "./planner.js";
+import { RESEARCH_FETCH_TOOL } from "../sharedos/identity.js";
 import { ProtocolState, type Phase } from "./protocol.js";
 import {
   ADJUDICATION_JSON_SCHEMA,
@@ -29,6 +30,7 @@ import {
   adjudicateInstruction,
   buildContextBrief,
   challengeInstruction,
+  hostFetchedCitationsNote,
   planInstruction,
   researchInstruction,
 } from "./prompts.js";
@@ -54,6 +56,26 @@ import {
 
 /** A guard against a model that submits nothing useful in a loop. */
 const MAX_LOCAL_STEPS_PER_DECISION = 6;
+
+/**
+ * How many caller-supplied citations the host will retrieve on its own.
+ *
+ * Checking the sources a candidate cited is the host's job, not a favour the
+ * model may decline, but it is still bounded work: three is enough to cover
+ * the citations behind the claims that were actually planned without letting a
+ * caller spend the whole budget by listing ten URLs.
+ */
+const MAX_HOST_CANDIDATE_FETCHES = 3;
+
+/** The extracted text handed back for a host-fetched citation. */
+const HOST_FETCH_TEXT_BUDGET = 4_000;
+
+/** The URL a fetch result says it retrieved, as the tool recorded it. */
+function evidenceUrlOf(output: unknown): string | undefined {
+  if (typeof output !== "object" || output === null) return undefined;
+  const url = (output as Record<string, unknown>)["url"];
+  return typeof url === "string" ? url : undefined;
+}
 
 export interface VerifierDriverOptions {
   readonly model: VerifierModel;
@@ -121,6 +143,83 @@ export function createVerifierDriver(
       const candidateUrls = request.sourceUrls ?? [];
       let toolCallsSpent = 0;
 
+      /**
+       * Caller-supplied citations still to be checked.
+       *
+       * Drained as they are fetched — by the model when it cooperates, by the
+       * host when it does not. `candidateCitationsChecked` in the receipt is
+       * then a fact about what was retrieved rather than a report of whether
+       * the model felt like looking.
+       */
+      const unfetchedCitations = [...new Set(candidateUrls)];
+      /** Calls the host issued itself, by call id -> URL. Never seen by the model as tool results. */
+      const hostIssuedCalls = new Map<string, string>();
+      /** What those retrievals produced, told to the model as data. */
+      const hostFetchReports: string[] = [];
+      let hostFetchesIssued = 0;
+
+      function citationFetched(url: unknown): void {
+        if (typeof url !== "string") return;
+        const index = unfetchedCitations.indexOf(url);
+        if (index >= 0) unfetchedCitations.splice(index, 1);
+      }
+
+      /**
+       * The next citation the host should retrieve, if it can afford to.
+       *
+       * One tool call of headroom is left below the budget so forcing a
+       * citation check can never cost the challenge search: a receipt that
+       * checked the candidate's sources but skipped contradiction hunting
+       * would be a worse trade than the one it replaced.
+       */
+      function nextCitationToFetch(): string | undefined {
+        if (hostFetchesIssued >= MAX_HOST_CANDIDATE_FETCHES) return undefined;
+        if (toolCallsSpent + 1 > options.toolCallBudget - 1) return undefined;
+        return unfetchedCitations.shift();
+      }
+
+      function hostFetchDecision(url: string): AgentTurnDecision {
+        const callId = `host-citation-${hostFetchesIssued + 1}`;
+        hostIssuedCalls.set(callId, url);
+        hostFetchesIssued += 1;
+        toolCallsSpent += 1;
+        return {
+          type: "tool_call",
+          call: {
+            id: callId,
+            tool: RESEARCH_FETCH_TOOL,
+            arguments: { url },
+            traceId,
+            requestedAt: new Date().toISOString(),
+          },
+        };
+      }
+
+      /**
+       * Summarise a host-issued retrieval for the model, as data.
+       *
+       * Deliberately not delivered as a tool result: the model never asked for
+       * this call, and a provider that pairs results to requests would reject
+       * one it has no request for. It is an observation about the world, which
+       * is what it is.
+       */
+      function describeHostFetch(input: Extract<AgentTurnInput, { type: "tool_result" }>): string {
+        const url = hostIssuedCalls.get(input.result.callId) ?? "the citation";
+        if (input.result.status !== "succeeded") {
+          return `${url} could not be retrieved (${input.result.error.code}). It is not evidence.`;
+        }
+        const output =
+          typeof input.result.output === "object" && input.result.output !== null
+            ? (input.result.output as Record<string, unknown>)
+            : {};
+        const text = typeof output["extractedText"] === "string" ? output["extractedText"] : "";
+        return [
+          `${url} -> evidence ${String(output["evidenceId"] ?? "")}`,
+          `(${String(output["domain"] ?? "")}, retrieved ${String(output["retrievedAt"] ?? "")}):`,
+          text.slice(0, HOST_FETCH_TEXT_BUDGET),
+        ].join(" ");
+      }
+
       /** Move the protocol on, and tell both the ledger and the model. */
       function enterPhase(phase: Phase): void {
         protocol.enter(phase);
@@ -171,15 +270,29 @@ export function createVerifierDriver(
           } else {
             const succeeded = input.result.status === "succeeded";
             protocol.recordToolResult(input.result.tool, succeeded);
-            observation = {
-              kind: "tool_result",
-              callId: input.result.callId,
-              toolName: input.result.tool,
-              ok: succeeded,
-              payload: succeeded
-                ? input.result.output
-                : { error: input.result.error.code, message: input.result.error.message },
-            };
+
+            if (hostIssuedCalls.has(input.result.callId)) {
+              // A citation the host chased itself. Record what it produced,
+              // chase the next one if there is one, and only then hand the
+              // model the challenge phase — with the findings as data.
+              hostFetchReports.push(describeHostFetch(input));
+              const next = nextCitationToFetch();
+              if (next !== undefined) return hostFetchDecision(next);
+              observation = { kind: "instruction", text: enterChallenge().instruction };
+            } else {
+              if (input.result.tool === RESEARCH_FETCH_TOOL && succeeded) {
+                citationFetched(evidenceUrlOf(input.result.output));
+              }
+              observation = {
+                kind: "tool_result",
+                callId: input.result.callId,
+                toolName: input.result.tool,
+                ok: succeeded,
+                payload: succeeded
+                  ? input.result.output
+                  : { error: input.result.error.code, message: input.result.error.message },
+              };
+            }
           }
 
           if (pending !== undefined) {
@@ -208,6 +321,11 @@ export function createVerifierDriver(
 
             if (decision.kind === "tool_call") {
               toolCallsSpent += 1;
+              if (decision.toolName === RESEARCH_FETCH_TOOL) {
+                // The model is checking this citation itself, which is the
+                // outcome the host would rather have.
+                citationFetched(decision.arguments["url"]);
+              }
               // Out of budget: stop researching and adjudicate on what we have,
               // which yields a `partial` receipt rather than a hung turn.
               if (toolCallsSpent > options.toolCallBudget) {
@@ -229,7 +347,9 @@ export function createVerifierDriver(
             }
 
             const advanced = handleSubmission(decision.submission, decision.payload);
-            if (advanced.type === "complete") return advanced.decision;
+            if (advanced.type === "complete" || advanced.type === "tool_call") {
+              return advanced.decision;
+            }
             observation = { kind: "instruction", text: advanced.instruction };
           }
 
@@ -245,7 +365,23 @@ export function createVerifierDriver(
 
       type Advance =
         | { readonly type: "instruction"; readonly instruction: string }
+        | { readonly type: "tool_call"; readonly decision: AgentTurnDecision }
         | { readonly type: "complete"; readonly decision: AgentTurnDecision };
+
+      /**
+       * Move to CHALLENGE, telling the model whatever the host retrieved on
+       * its behalf. The reports are prepended to the challenge instruction so
+       * they arrive as content to judge, not as a separate model round.
+       */
+      function enterChallenge(): { readonly instruction: string } {
+        enterPhase("challenge");
+        const note = hostFetchedCitationsNote(hostFetchReports);
+        hostFetchReports.length = 0;
+        return {
+          instruction:
+            note === "" ? challengeInstruction(outcome.plan) : `${note}\n\n${challengeInstruction(outcome.plan)}`,
+        };
+      }
 
       /** Apply a phase submission and decide what the model is asked next. */
       function handleSubmission(submission: string, payload: unknown): Advance {
@@ -273,8 +409,15 @@ export function createVerifierDriver(
             if (protocol.activityIn("fetch").fetchCalls > 0 || protocol.totalFetchesSucceeded > 0) {
               protocol.complete("fetch");
             }
-            enterPhase("challenge");
-            return { type: "instruction", instruction: challengeInstruction(outcome.plan) };
+            // Declaring research finished does not settle whether the
+            // candidate's own sources were checked. If any are outstanding the
+            // host retrieves them itself, so `candidateCitationsChecked`
+            // reflects retrieval rather than the model's willingness.
+            const citation = nextCitationToFetch();
+            if (citation !== undefined) {
+              return { type: "tool_call", decision: hostFetchDecision(citation) };
+            }
+            return { type: "instruction", instruction: enterChallenge().instruction };
           }
 
           case SUBMIT_CHALLENGE_COMPLETE: {
