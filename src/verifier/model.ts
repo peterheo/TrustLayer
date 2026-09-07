@@ -6,29 +6,40 @@ import { TrustLayerError } from "../errors.js";
 /**
  * The model provider port.
  *
- * SharedOS does not own the model, and TrustLayer does not couple to one
+ * SharedOS does not own the model and TrustLayer does not couple to one
  * vendor. Everything provider-specific lives behind this interface, so the
- * verifier driver, the tool boundary, the evidence ledger, and the scoring are
- * all testable without a network or an API key.
+ * protocol driver, the tool boundary, the evidence ledger, the validator and
+ * the receipt are all testable without a network or an API key.
+ *
+ * The model can do exactly two things: ask for a SharedOS research tool, or
+ * submit a structured artefact for the current phase. It cannot end the turn,
+ * set protocol state, or produce provenance.
  */
 
-/** A tool as the model sees it: name, description, schema. No capability data. */
+/** A tool as the model sees it. Carries no capability information. */
 export interface ModelToolSpec {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: JsonObject;
 }
 
+/** A structured artefact the driver accepts for a phase. */
+export interface ModelSubmissionSpec {
+  readonly name: string;
+  readonly description: string;
+  readonly schema: JsonObject;
+}
+
 export interface ModelTurnRequest {
   readonly system: string;
-  readonly task: string;
+  /** The untrusted brief: the task and the output under verification. */
+  readonly context: string;
   readonly tools: readonly ModelToolSpec[];
-  /** The schema the final answer must satisfy. */
-  readonly outputSchema: JsonObject;
+  readonly submissions: readonly ModelSubmissionSpec[];
 }
 
 export type ModelObservation =
-  | { readonly kind: "start" }
+  | { readonly kind: "instruction"; readonly text: string }
   | {
       readonly kind: "tool_result";
       readonly callId: string;
@@ -44,7 +55,7 @@ export type ModelStep =
       readonly toolName: string;
       readonly arguments: JsonObject;
     }
-  | { readonly kind: "final"; readonly output: unknown };
+  | { readonly kind: "submit"; readonly submission: string; readonly payload: unknown };
 
 export interface VerifierModelSession {
   next(observation: ModelObservation, signal: AbortSignal): Promise<ModelStep>;
@@ -58,19 +69,21 @@ export interface VerifierModel {
 /**
  * A model that replays a fixed script.
  *
- * This is what the test suite runs on. It makes tool visibility, evidence
- * validation, scoring, and the injection fixtures deterministic, and it lets a
- * test script a model that misbehaves — citing a source that was never
- * returned, or reaching for a tool it was never granted — which a real model
- * cannot be relied upon to do on command.
+ * This is what the tests and offline demos run on. It makes tool visibility,
+ * phase accounting, evidence validation and receipt assembly deterministic,
+ * and — more usefully — it lets a test script a model that *misbehaves*:
+ * citing evidence that was never retrieved, skipping the challenge phase, or
+ * reaching for a tool it was never granted. A real model cannot be relied upon
+ * to do any of those on command.
  */
 export class ScriptedVerifierModel implements VerifierModel {
   readonly id = "scripted";
   readonly #script: readonly ModelStep[];
-  /** Every observation the driver handed back, for assertions. */
+  /** Everything the driver handed back, for assertions. */
   readonly observations: ModelObservation[] = [];
   /** The catalogue the model was offered, for tool-visibility assertions. */
   offeredTools: readonly string[] = [];
+  offeredSubmissions: readonly string[] = [];
 
   constructor(script: readonly ModelStep[]) {
     this.#script = script;
@@ -78,6 +91,8 @@ export class ScriptedVerifierModel implements VerifierModel {
 
   async start(request: ModelTurnRequest): Promise<VerifierModelSession> {
     this.offeredTools = request.tools.map((tool) => tool.name);
+    this.offeredSubmissions = request.submissions.map((submission) => submission.name);
+
     let index = 0;
     const script = this.#script;
     const observations = this.observations;
@@ -96,8 +111,6 @@ export class ScriptedVerifierModel implements VerifierModel {
   }
 }
 
-const SUBMIT_TOOL = "submit_judgment";
-
 interface AnthropicContentBlock {
   readonly type: string;
   readonly id?: string;
@@ -114,14 +127,13 @@ interface AnthropicMessage {
 /**
  * Anthropic Messages API.
  *
- * Structured output is obtained by giving the model a `submit_judgment` tool
- * whose input schema is the judgment schema, alongside the SharedOS research
- * tools. Calling that tool is how the model ends its turn, which keeps the
- * final answer schema-constrained instead of parsed out of prose.
+ * Research tools and phase submissions are both presented as tools, which
+ * keeps every artefact schema-constrained rather than parsed out of prose.
  *
- * Provider-native web search is deliberately not enabled: it would fetch
- * outside the SharedOS tool boundary, so none of it would appear in the audit
- * trail or the evidence ledger.
+ * Provider-native web search is deliberately not enabled: it would retrieve
+ * outside the SharedOS tool boundary, so nothing it found would appear in the
+ * audit trail or acquire an evidence ID — which would make it useless as
+ * evidence and invisible to the receipt.
  */
 export class AnthropicVerifierModel implements VerifierModel {
   readonly id = "anthropic";
@@ -138,26 +150,33 @@ export class AnthropicVerifierModel implements VerifierModel {
     const model = this.#model;
     const messages: AnthropicMessage[] = [];
 
+    // Wire names cannot contain dots; map back so SharedOS sees real names.
+    const wireToReal = new Map(
+      request.tools.map((tool) => [tool.name.replaceAll(".", "_"), tool.name]),
+    );
+    const submissionNames = new Set(request.submissions.map((entry) => entry.name));
+
     const tools = [
       ...request.tools.map((tool) => ({
         name: tool.name.replaceAll(".", "_"),
         description: tool.description,
         input_schema: tool.inputSchema,
       })),
-      {
-        name: SUBMIT_TOOL,
-        description:
-          "Submit the final verification judgment. Call this exactly once, when finished.",
-        input_schema: request.outputSchema,
-      },
+      ...request.submissions.map((submission) => ({
+        name: submission.name,
+        description: submission.description,
+        input_schema: submission.schema,
+      })),
     ];
-    // The wire names cannot contain dots; map back so SharedOS sees real names.
-    const wireToReal = new Map(request.tools.map((tool) => [tool.name.replaceAll(".", "_"), tool.name]));
+
+    let first = true;
 
     return {
       async next(observation: ModelObservation, signal: AbortSignal): Promise<ModelStep> {
-        if (observation.kind === "start") {
-          messages.push({ role: "user", content: request.task });
+        if (observation.kind === "instruction") {
+          const text = first ? `${request.context}\n\n${observation.text}` : observation.text;
+          first = false;
+          messages.push({ role: "user", content: text });
         } else {
           messages.push({
             role: "user",
@@ -198,20 +217,26 @@ export class AnthropicVerifierModel implements VerifierModel {
         messages.push({ role: "assistant", content });
 
         const toolUse = content.find((block) => block.type === "tool_use");
-        if (toolUse === undefined || toolUse.name === undefined || toolUse.id === undefined) {
+        if (toolUse?.name === undefined || toolUse.id === undefined) {
           throw new TrustLayerError("MODEL_OUTPUT_INVALID", "model produced no tool call");
         }
 
-        if (toolUse.name === SUBMIT_TOOL) {
-          return { kind: "final", output: toolUse.input };
+        if (submissionNames.has(toolUse.name)) {
+          return { kind: "submit", submission: toolUse.name, payload: toolUse.input };
         }
 
-        const realName = wireToReal.get(toolUse.name) ?? toolUse.name;
         const args =
-          typeof toolUse.input === "object" && toolUse.input !== null && !Array.isArray(toolUse.input)
+          typeof toolUse.input === "object" &&
+          toolUse.input !== null &&
+          !Array.isArray(toolUse.input)
             ? (toolUse.input as JsonObject)
             : {};
-        return { kind: "tool_call", callId: toolUse.id, toolName: realName, arguments: args };
+        return {
+          kind: "tool_call",
+          callId: toolUse.id,
+          toolName: wireToReal.get(toolUse.name) ?? toolUse.name,
+          arguments: args,
+        };
       },
     };
   }

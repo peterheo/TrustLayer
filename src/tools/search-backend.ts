@@ -1,6 +1,6 @@
 import { config } from "../config.js";
 import { TrustLayerError } from "../errors.js";
-import { checkUrlSyntax } from "../tools/url-policy.js";
+import { checkUrlSyntax } from "./url-policy.js";
 
 /**
  * One query in, normalized results out.

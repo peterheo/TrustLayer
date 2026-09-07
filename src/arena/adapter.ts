@@ -1,83 +1,143 @@
 import { verify, type VerifyOptions } from "../api/verify.js";
 import { toTrustLayerError, type TrustLayerErrorCode } from "../errors.js";
-import type { VerifyResponse } from "../verification/schemas.js";
+import { METHOD_VERSION, type EvidenceReceipt } from "../evidence/schemas.js";
 
 /**
  * The Arena boundary.
  *
  * The SharedOS SDK contains no Arena or SharedNet surface — no service
  * registration, no credit pricing, no delivery contract — and no organizer
- * material was supplied to this repository (see NOTES.md §5). Rather than
- * inventing that contract, this module keeps the boundary as narrow as it can
- * be: plain JSON in, plain JSON out, plus a descriptor of what the service is
- * and costs.
+ * material was supplied to this repository (see NOTES.md). Rather than
+ * inventing that contract, this module keeps the boundary as narrow as
+ * possible: plain JSON in, plain JSON out, plus descriptors of what each
+ * service is and costs.
  *
- * Binding this to the organizers' real mechanism should be a change to this
- * file and `arena/service-card.yaml` alone. Nothing under `src/` outside this
- * directory depends on an unverified Arena type.
+ * Binding to the organizers' real mechanism should be a change to this file
+ * and `arena/service-card.yaml` alone. Nothing else under `src/` depends on an
+ * unverified Arena type.
  */
 
 export const TRUST_VERIFY_SERVICE_NAME = "trust.verify";
+export const TRUST_CHECK_SERVICE_NAME = "trust.check";
 
-/** The Arena-credit price. Confirm against the organizers' pricing rules. */
+/** Provisional. Confirm against the organizers' pricing rules. */
 export const TRUST_VERIFY_PRICE_CREDITS = 3;
+export const TRUST_CHECK_PRICE_CREDITS = 1;
+
+const SHARED_OUTPUT_DESCRIPTION = {
+  reportId: "string — identifier for this receipt",
+  methodVersion: `string — the verification procedure used, currently ${METHOD_VERSION}`,
+  protocolStatus: "complete | partial | failed — whether the protocol actually ran",
+  overallStatus: "supported | mixed | contradicted | unverified",
+  claims: "per claim: status, importance, confidence, rationale, and cited evidence IDs",
+  evidence: "every source actually retrieved: URL, resolved URL, domain, timestamp, SHA-256",
+  coverage: "how much of the selected material was investigated with real evidence",
+  checks: "host-derived flags: independent search, sources fetched, contradiction search, citations validated",
+  security: "instruction-like content found in the submitted output or retrieved pages",
+  provenance: "SharedOS purpose, execution id, trace id, and the tools actually invoked",
+} as const;
+
+const SHARED_LIMITS = [
+  "Evidence-based, and evidence can be wrong, missing, or misleading.",
+  "Absence of evidence is reported as unverified, never as false.",
+  "Does not establish that a claim is true — it establishes what was retrieved and what it says.",
+  "Instruction detection is best-effort; capability containment is the actual guarantee.",
+  "Only publicly reachable http(s) pages can be retrieved as evidence.",
+] as const;
 
 /**
- * A neutral, self-describing service descriptor.
+ * `trust.verify` — the full protocol over up to three claims.
  *
- * Field names are ours, not the Arena's. When the real schema is known, map
- * this object onto it; the content is what another agent needs in order to
+ * Field names here are ours, not the Arena's. When the real schema is known,
+ * map this object onto it; the content is what another agent needs in order to
  * decide whether to buy.
  */
 export const TRUST_VERIFY_DESCRIPTOR = {
   name: TRUST_VERIFY_SERVICE_NAME,
   price_credits: TRUST_VERIFY_PRICE_CREDITS,
   description:
-    "Independently verify factual output from another agent. Returns claim-level " +
-    "support/contradiction status, web evidence, suspicious-instruction indicators, " +
-    "and a deterministic trust score.",
+    "Independent evidence receipts for claims in another agent's output. We decompose the " +
+    "output into its consequential factual claims, search for sources, fetch them, check any " +
+    "citations the output supplied, search for evidence that would contradict it, and return " +
+    "a machine-readable receipt listing every source actually retrieved — with timestamps, " +
+    "content digests, and the SharedOS execution that produced them.",
   use_when:
-    "You received factual or current information from another service and intend to rely on it.",
+    "You received factual or current information from another service and are about to act on it.",
   input: {
     task: "string — the question the other agent was answering",
     candidate_output: "string — the output you want checked",
-    source_urls: "optional string[] — URLs the other agent claimed as sources",
+    focus_claims: "optional string[] — the exact claims you care about; skips extraction",
+    source_urls: "optional string[] — URLs the other agent claimed as sources; fetched and tested",
     freshness: "optional auto | current | recent | timeless",
-    max_claims: "optional integer 1-8, default 5",
+    max_claims: "optional integer 1-5, default 3",
   },
-  output: {
-    verdict: "supported | mixed | contradicted | unverified",
-    trust_score: "integer 0-100, or null when nothing falsifiable was found",
-    claims: "array of per-claim status, importance, confidence, rationale and evidence",
-    security: "prompt-injection risk and indicators found in the submitted output",
-    audit: "SharedOS execution id, trace id and the research tools actually used",
-  },
+  output: SHARED_OUTPUT_DESCRIPTION,
   good_for: [
     "research results",
-    "current facts",
-    "prices",
-    "schedules",
-    "citations",
+    "current facts and prices",
+    "schedules and deadlines",
+    "citations that need checking",
     "comparisons",
     "extracted web information",
   ],
   not_for: ["purely subjective opinions", "creative writing", "deterministic arithmetic"],
-  typical_latency_seconds: 45,
+  guarantees: [
+    "Every evidence ID in the receipt corresponds to a page this execution actually retrieved.",
+    "Retrieval timestamps, resolved URLs and content digests are generated by trusted code, not by a model.",
+    "A citation to evidence that was not retrieved is discarded, and the claim is downgraded.",
+    "Protocol-completion flags reflect observed tool calls, not model self-report.",
+    "The verifier held only search and fetch capability, under the purpose trust.verify.",
+  ],
+  limitations: SHARED_LIMITS,
+  typical_latency_seconds: 60,
   max_latency_seconds: 90,
 } as const;
 
-/** What a caller gets back. A discriminated union so failure is never mistaken for a verdict. */
+/**
+ * `trust.check` — one claim, same protocol, same receipt.
+ *
+ * The cheap entry product. It runs the identical engine with `maxClaims: 1`
+ * and a caller-supplied focus claim, which removes the planning round-trip
+ * entirely: the caller already knows which fact its next decision turns on.
+ */
+export const TRUST_CHECK_DESCRIPTOR = {
+  name: TRUST_CHECK_SERVICE_NAME,
+  price_credits: TRUST_CHECK_PRICE_CREDITS,
+  description:
+    "Check one specific claim against independently retrieved evidence, and return the same " +
+    "evidence receipt as trust.verify. Fastest and cheapest when you already know which single " +
+    "fact your next decision depends on.",
+  use_when:
+    "One fact decides your next action — a price, a date, a deadline, an availability — and you " +
+    "want a source for it rather than another opinion.",
+  input: {
+    task: "string — what you are deciding",
+    candidate_output: "string — the output containing the claim",
+    focus_claims: "string[] — exactly one claim to check",
+  },
+  output: SHARED_OUTPUT_DESCRIPTION,
+  good_for: ["a single price", "a single date or deadline", "one availability or policy fact"],
+  not_for: ["checking a whole answer — use trust.verify", "subjective statements"],
+  guarantees: TRUST_VERIFY_DESCRIPTOR.guarantees,
+  limitations: SHARED_LIMITS,
+  typical_latency_seconds: 25,
+  max_latency_seconds: 45,
+} as const;
+
+export const SERVICE_DESCRIPTORS = [TRUST_VERIFY_DESCRIPTOR, TRUST_CHECK_DESCRIPTOR] as const;
+
+/** A discriminated union, so a failure is never mistaken for a receipt. */
 export type ServiceCallResult =
-  | { readonly ok: true; readonly result: VerifyResponse }
+  | { readonly ok: true; readonly receipt: EvidenceReceipt }
   | {
       readonly ok: false;
       readonly error: { readonly code: TrustLayerErrorCode; readonly message: string };
     };
 
 /**
- * Handle one paid service call.
+ * Handle one paid `trust.verify` call.
  *
- * Errors are returned rather than thrown, and are reduced to a code and a safe
+ * Errors are returned rather than thrown, and reduced to a code and a safe
  * message: an Arena caller should never receive a stack trace, an internal
  * URL, a provider error, or anything about our grants.
  */
@@ -85,8 +145,39 @@ export async function handleServiceCall(
   payload: unknown,
   options: VerifyOptions = {},
 ): Promise<ServiceCallResult> {
+  return run(normalizePayload(payload), options);
+}
+
+/**
+ * Handle one paid `trust.check` call.
+ *
+ * The same engine, clamped to a single claim. When the caller did not name a
+ * focus claim the request is still valid — planning will pick the single most
+ * consequential claim itself — so this never rejects for want of one.
+ */
+export async function handleCheckCall(
+  payload: unknown,
+  options: VerifyOptions = {},
+): Promise<ServiceCallResult> {
+  const normalized = normalizePayload(payload);
+  if (typeof normalized !== "object" || normalized === null || Array.isArray(normalized)) {
+    return run(normalized, options);
+  }
+  const record = normalized as Record<string, unknown>;
+  const focus = record["focusClaims"];
+  return run(
+    {
+      ...record,
+      maxClaims: 1,
+      ...(Array.isArray(focus) && focus.length > 0 ? { focusClaims: [focus[0]] } : {}),
+    },
+    options,
+  );
+}
+
+async function run(payload: unknown, options: VerifyOptions): Promise<ServiceCallResult> {
   try {
-    return { ok: true, result: await verify(normalizePayload(payload), options) };
+    return { ok: true, receipt: await verify(payload, options) };
   } catch (thrown) {
     const error = toTrustLayerError(thrown);
     return { ok: false, ...error.toPublicJSON() };
@@ -98,7 +189,7 @@ export async function handleServiceCall(
  *
  * Another agent reading the service card will write `candidate_output`, and
  * refusing that on a technicality would cost a sale for no security benefit.
- * Unknown keys are still rejected by the schema.
+ * Unknown keys are still rejected by the request schema.
  */
 function normalizePayload(payload: unknown): unknown {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return payload;
@@ -107,6 +198,7 @@ function normalizePayload(payload: unknown): unknown {
   const aliases: Record<string, string> = {
     candidate_output: "candidateOutput",
     source_urls: "sourceUrls",
+    focus_claims: "focusClaims",
     max_claims: "maxClaims",
   };
 

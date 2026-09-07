@@ -7,8 +7,8 @@ import {
   type ToolHandler,
 } from "@aicoo/sharedos";
 
-import { EvidenceLedgerRegistry } from "../research/evidence-ledger.js";
-import { createSearchBackend, type SearchBackend } from "../research/search-backend.js";
+import { EvidenceLedgerRegistry } from "../evidence/ledger.js";
+import { createSearchBackend, type SearchBackend } from "../tools/search-backend.js";
 import { createResearchFetchTool } from "../tools/research-fetch.js";
 import { createResearchSearchTool } from "../tools/research-search.js";
 import { StaticGrantSource, verifierGrants } from "./grants.js";

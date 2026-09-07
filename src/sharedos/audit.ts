@@ -1,13 +1,11 @@
-import type { ExecutionEvent, ExecutionResult } from "@aicoo/sharedos";
-
-import type { VerifyAudit } from "../verification/schemas.js";
+import type { ExecutionEvent } from "@aicoo/sharedos";
 
 /**
- * Audit metadata, derived from the execution SharedOS actually performed.
+ * Reading the execution record.
  *
- * Every field here is read off `ExecutionResult` and its ordered event list.
- * None of it is model output. The model's judgment schema has no place to put
- * a trace id or a tool name, so there is nothing to accidentally trust.
+ * The receipt's `provenance` block is built from these helpers. None of it is
+ * model output: the adjudication schema has no place to put a trace id or a
+ * tool name, so there is nothing to accidentally trust.
  *
  * SharedOS has two event streams and they are not interchangeable:
  *
@@ -112,23 +110,4 @@ export function refusedCallsFrom(
     refused.push({ tool, status, reasonCode });
   }
   return refused;
-}
-
-export function deriveAudit(result: ExecutionResult): VerifyAudit {
-  const startedAt = result.startedAt;
-  const completedAt = result.completedAt;
-  const started = Date.parse(startedAt);
-  const completed = Date.parse(completedAt);
-  const durationMs =
-    Number.isFinite(started) && Number.isFinite(completed) ? completed - started : undefined;
-
-  return {
-    executionId: result.executionId,
-    traceId: result.traceId,
-    toolsUsed: toolsUsedFrom(result.events),
-    sharedosStatus: result.status,
-    startedAt,
-    completedAt,
-    ...(durationMs === undefined ? {} : { durationMs }),
-  };
 }
