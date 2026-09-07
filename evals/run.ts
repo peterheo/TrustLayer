@@ -5,6 +5,9 @@
  *   pnpm eval --selftest  exercise the harness with stub models (NOT a benchmark)
  *   pnpm eval --case <id> run one case
  *
+ * Set MODEL_INPUT_USD_PER_MTOK and MODEL_OUTPUT_USD_PER_MTOK to price the
+ * comparison; without them cost is reported as n/a rather than guessed.
+ *
  * A real comparison needs a real model on both sides. Without `MODEL_API_KEY`
  * this refuses to run rather than printing numbers that would look like
  * results — a fabricated benchmark is worse than no benchmark, and the
@@ -25,7 +28,14 @@ import {
   type BaselineMode,
   type BaselineModel,
 } from "./baseline-second-check.js";
-import { formatMetrics, scoreCase, summarise, type CaseOutcome } from "./metrics.js";
+import {
+  costRatesFromEnv,
+  formatMetrics,
+  scoreCase,
+  summarise,
+  type CaseOutcome,
+} from "./metrics.js";
+import { MeteredVerifierModel } from "./metering.js";
 import { runTrustLayer } from "./trustlayer.js";
 import { buildWorld } from "./world.js";
 import type { VerifierModel } from "../src/verifier/model.js";
@@ -124,11 +134,19 @@ async function main(): Promise<void> {
 
   const models = selftest ? undefined : requireModels();
   const stubBaseline = new StubBaselineModel(new Map());
+  // Rates are the runner's, not the code's: without them cost reports as n/a.
+  const rates = costRatesFromEnv();
+  // One wrapper for the whole run; per-case spend comes out as a delta.
+  const meteredVerifier =
+    models === undefined ? undefined : new MeteredVerifierModel(models.verifier);
 
   for (const testCase of selected) {
     const world = buildWorld(testCase);
 
-    const verifierModel = selftest ? selftestVerifier(testCase) : models!.verifier;
+    // The selftest scripts a fresh model per case, so it gets its own meter.
+    const verifierModel = selftest
+      ? new MeteredVerifierModel(selftestVerifier(testCase))
+      : meteredVerifier!;
     const result = await runTrustLayer(testCase, world, verifierModel, signal);
 
     trustlayerOutcomes.push(
@@ -143,6 +161,7 @@ async function main(): Promise<void> {
         latencyMs: result.latencyMs,
         toolCalls: result.toolCalls,
         sourcesFetched: result.sourcesFetched,
+        usage: result.usage,
         ...(result.errorCode === undefined ? {} : { errorCode: result.errorCode }),
       }),
     );
@@ -157,8 +176,11 @@ async function main(): Promise<void> {
           citedUrls: baseline.verdict.citedUrls,
           world,
           latencyMs: baseline.latencyMs,
+          // The +search baseline is handed one search's results for free, so
+          // it is charged for one search and no fetches.
           toolCalls: mode === "with_search" ? 1 : 0,
           sourcesFetched: 0,
+          usage: baseline.usage,
         }),
       );
     }
@@ -169,12 +191,23 @@ async function main(): Promise<void> {
   }
 
   const metrics = [
-    summarise("trustlayer", trustlayerOutcomes),
-    summarise("baseline(plain)", baselineOutcomes.get("plain")!),
-    summarise("baseline(+search)", baselineOutcomes.get("with_search")!),
+    summarise("trustlayer", trustlayerOutcomes, rates),
+    summarise("baseline(plain)", baselineOutcomes.get("plain")!, rates),
+    summarise("baseline(+search)", baselineOutcomes.get("with_search")!, rates),
   ];
 
   console.log(`\n${formatMetrics(metrics)}\n`);
+
+  if (rates === undefined) {
+    console.log(
+      [
+        "Cost is reported as n/a: no token rates were supplied. To price the",
+        "comparison, set MODEL_INPUT_USD_PER_MTOK and MODEL_OUTPUT_USD_PER_MTOK",
+        "to your provider's current rates. Nothing here guesses a price.",
+        "",
+      ].join("\n"),
+    );
+  }
 
   if (selftest) {
     console.log(

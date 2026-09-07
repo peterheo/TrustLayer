@@ -1,4 +1,4 @@
-import type { ExecutionEvent } from "@aicoo/sharedos";
+import type { AuditEvent, ExecutionEvent } from "@aicoo/sharedos";
 
 /**
  * Reading the execution record.
@@ -18,7 +18,8 @@ import type { ExecutionEvent } from "@aicoo/sharedos";
  *   `tool.invoked`, `turn.ended`, each flat and carrying `purpose`.
  *
  * This module reads the first. `tool.invoked` is *not* in it, which is why
- * tool usage is derived from `tool.completed`.
+ * tool usage is derived from `tool.completed`. The one helper that reads the
+ * second — `toolInvocationCount` — says so on the tin.
  */
 
 /** Types observed on `ExecutionResult.events`. */
@@ -110,4 +111,19 @@ export function refusedCallsFrom(
     refused.push({ tool, status, reasonCode });
   }
   return refused;
+}
+
+/**
+ * How many tool calls a turn actually made, from the kernel's audit sink.
+ *
+ * Reads the *audit* stream, not the execution stream: `tool.invoked` is only
+ * emitted there. Counting distinct tool names instead — there are only ever
+ * two — would understate the work by a factor of the number of calls, which
+ * matters when the number is being compared against something cheaper.
+ *
+ * Every invocation counts, refusals included: a refused call still cost a
+ * model round trip and a kernel decision.
+ */
+export function toolInvocationCount(events: readonly AuditEvent[]): number {
+  return events.filter((event) => event.type === AUDIT_EVENT_TYPES.toolInvoked).length;
 }

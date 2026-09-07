@@ -1,5 +1,7 @@
 import { TrustLayerError } from "../src/errors.js";
 import type { ClaimStatus } from "../src/evidence/schemas.js";
+import { ZERO_USAGE, type ModelUsage, type UsageReporting } from "../src/verifier/model.js";
+import { subtractUsage, usageOf } from "./metering.js";
 import type { EvalCase } from "./cases/index.js";
 import type { EvalWorld } from "./world.js";
 
@@ -33,6 +35,8 @@ export interface BaselineVerdict {
 export interface BaselineResult {
   readonly verdict: BaselineVerdict;
   readonly modelCalls: number;
+  /** Tokens this case cost, where the provider reports them. */
+  readonly usage: ModelUsage;
   readonly latencyMs: number;
 }
 
@@ -88,8 +92,19 @@ export async function runBaseline(
   signal: AbortSignal,
 ): Promise<BaselineResult> {
   const started = Date.now();
+  // Models are reused across cases, so this case's cost is the delta.
+  const before = usageOf(model);
   const verdict = await model.judge(buildBaselinePrompt(testCase, mode, world), signal);
-  return { verdict, modelCalls: 1, latencyMs: Date.now() - started };
+  const spent = subtractUsage(usageOf(model), before);
+
+  return {
+    verdict,
+    // One call by construction: that economy is the baseline's advantage, and
+    // the comparison is only honest if it is counted in the baseline's favour.
+    modelCalls: 1,
+    usage: { ...spent, calls: 1 },
+    latencyMs: Date.now() - started,
+  };
 }
 
 interface AnthropicBlock {
@@ -99,14 +114,31 @@ interface AnthropicBlock {
 }
 
 /** The realistic implementation: one model call, structured output. */
-export class AnthropicBaselineModel implements BaselineModel {
+export class AnthropicBaselineModel implements BaselineModel, UsageReporting {
   readonly id: string;
+  #usage: ModelUsage = ZERO_USAGE;
 
   constructor(
     private readonly apiKey: string,
     private readonly model: string,
   ) {
     this.id = `anthropic:${model}`;
+  }
+
+  get usage(): ModelUsage {
+    return this.#usage;
+  }
+
+  #record(usage: unknown): void {
+    const record =
+      typeof usage === "object" && usage !== null ? (usage as Record<string, unknown>) : {};
+    const input = typeof record["input_tokens"] === "number" ? record["input_tokens"] : 0;
+    const output = typeof record["output_tokens"] === "number" ? record["output_tokens"] : 0;
+    this.#usage = {
+      calls: this.#usage.calls + 1,
+      inputTokens: this.#usage.inputTokens + input,
+      outputTokens: this.#usage.outputTokens + output,
+    };
   }
 
   async judge(prompt: string, signal: AbortSignal): Promise<BaselineVerdict> {
@@ -151,7 +183,11 @@ export class AnthropicBaselineModel implements BaselineModel {
       throw new TrustLayerError("MODEL_FAILURE", `baseline anthropic status ${response.status}`);
     }
 
-    const body = (await response.json()) as { content?: readonly AnthropicBlock[] };
+    const body = (await response.json()) as {
+      content?: readonly AnthropicBlock[];
+      usage?: unknown;
+    };
+    this.#record(body.usage);
     const block = (body.content ?? []).find((entry) => entry.type === "tool_use");
     const input = block?.input as Partial<BaselineVerdict> | undefined;
 

@@ -260,7 +260,7 @@ body runs.
 ## Tests
 
 ```
-pnpm test        # 177 tests
+pnpm test        # 187 tests
 pnpm typecheck
 ```
 
@@ -298,14 +298,26 @@ pnpm eval --selftest  # exercise the harness with stub models — NOT a benchmar
 pnpm eval --case stale-price
 ```
 
+Cost is measured, not assumed: tool calls come from the kernel's own audit
+record (not from the count of distinct tool names, which is never more than
+two), model rounds from the model port, and tokens from the provider's own
+accounting. Money is only reported when `MODEL_INPUT_USD_PER_MTOK` and
+`MODEL_OUTPUT_USD_PER_MTOK` are set — the harness will not invent a price, and
+prints `n/a` instead.
+
 16 seeded cases carry known ground truth across the classes the requirements
 list — correct facts, subtle and numeric errors, stale information, fabricated
 citations, citation/source mismatch, unsupported claims, partial truths,
 conflicting sources, dead citations, prompt injection, and non-falsifiable
-claims — served from a closed per-case web both systems share. Metrics track
-material-error detection and false-contradiction rate separately, so answering
-`unverified` or `contradicted` to everything scores badly; tests assert both
-degenerate strategies fail.
+claims — served from a closed per-case web both systems share.
+
+Metrics track material-error detection and false-contradiction rate
+separately, so answering `unverified` or `contradicted` to everything scores
+badly; tests assert both degenerate strategies fail. Stale information and
+citation mismatch get their own detection rates, because those are the two
+failure modes a model reasoning from memory cannot catch and are where the
+thesis has to show a difference — burying them in overall accuracy would hide
+the only comparison that matters.
 
 **No benchmark has been run.** `pnpm eval` refuses to start without
 `MODEL_API_KEY` rather than emitting numbers that would look like results, and
