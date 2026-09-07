@@ -1,4 +1,4 @@
-# TrustLayer Arena service card.
+# TrustLayer Arena service cards.
 #
 # IMPORTANT: these field names are ours, not the Arena's. The SharedOS SDK
 # contains no service-registration schema and no organizer material was
@@ -6,88 +6,186 @@
 # at the real field names this file states the semantic content an agent needs
 # and leaves the mapping to whoever has the organizers' schema.
 #
-# The same content is available programmatically as TRUST_VERIFY_DESCRIPTOR in
-# src/arena/adapter.ts, which is what code should read.
+# The same content is available programmatically as TRUST_VERIFY_DESCRIPTOR and
+# TRUST_CHECK_DESCRIPTOR in src/arena/adapter.ts, which is what code should
+# read. tests/arena.test.ts keeps the two in step.
 
-name: trust.verify
-price: 3
-currency: arena-credits
+method_version: trustlayer-evidence-v1
 
-description: >
-  Independently verify factual output from another agent.
-  Returns claim-level support/contradiction status,
-  web evidence, suspicious-instruction indicators,
-  and a trust score.
+services:
+  - name: trust.verify
+    price: 3
+    currency: arena-credits
+    entry_point: handleServiceCall
 
-use_when: >
-  You received factual or current information from another
-  service and intend to rely on it.
+    description: >
+      Independent evidence receipts for claims in another agent's output.
+      TrustLayer decomposes the output into its consequential factual claims,
+      searches for sources, fetches them, checks any citations the output
+      supplied, looks for evidence that would contradict it, and returns a
+      machine-readable receipt listing every source actually retrieved — with
+      timestamps, content digests, and the SharedOS execution that produced
+      them.
 
-input:
-  task:
-    type: string
-    required: true
-    description: The question or task the other agent was answering.
-  candidate_output:
-    type: string
-    required: true
-    max_length: 40000
-    description: The output you want checked.
-  source_urls:
-    type: array
-    required: false
-    max_items: 10
-    description: URLs the other agent claimed as its sources. Checked, not trusted.
-  freshness:
-    type: enum
-    required: false
-    values: [auto, current, recent, timeless]
-    default: auto
-  max_claims:
-    type: integer
-    required: false
-    minimum: 1
-    maximum: 8
-    default: 5
+    use_when: >
+      You received factual or current information from another service and are
+      about to act on it.
 
+    input:
+      task:
+        type: string
+        required: true
+        description: The question or task the other agent was answering.
+      candidate_output:
+        type: string
+        required: true
+        max_length: 40000
+        description: The output you want checked. Treated as data, never as instructions.
+      focus_claims:
+        type: array
+        required: false
+        max_items: 5
+        description: >
+          The exact claims you care about. Supplying these skips claim
+          extraction, so the whole budget is spent on what your next decision
+          depends on.
+      source_urls:
+        type: array
+        required: false
+        max_items: 10
+        description: >
+          URLs the other agent claimed as its sources. Fetched and tested, and
+          labelled in the receipt as candidate citations rather than as
+          independent evidence.
+      freshness:
+        type: enum
+        required: false
+        values: [auto, current, recent, timeless]
+        default: auto
+      max_claims:
+        type: integer
+        required: false
+        minimum: 1
+        maximum: 5
+        default: 3
+
+    performance:
+      typical_seconds: 60
+      max_seconds: 90
+      note: Bounded well below the Arena's five-minute service-call ceiling.
+
+  - name: trust.check
+    price: 1
+    currency: arena-credits
+    entry_point: handleCheckCall
+
+    description: >
+      Check one specific claim against independently retrieved evidence, and
+      get back the same evidence receipt as trust.verify. The same engine,
+      clamped to a single claim.
+
+    use_when: >
+      One fact decides your next action — a price, a date, a deadline, an
+      availability — and you want a source for it rather than another opinion.
+
+    input:
+      task:
+        type: string
+        required: true
+      candidate_output:
+        type: string
+        required: true
+      focus_claims:
+        type: array
+        required: false
+        max_items: 1
+        description: >
+          The single claim to check. Optional: without it the planner selects
+          the most consequential claim itself, at the cost of one model round
+          trip.
+
+    performance:
+      typical_seconds: 25
+      max_seconds: 45
+
+# Both services return the same artifact: an evidence receipt.
 output:
-  verdict:
+  report_id:
+    type: string
+    description: Identifier for this receipt.
+  method_version:
+    type: string
+    description: The verification procedure used. Currently trustlayer-evidence-v1.
+  protocol_status:
+    type: enum
+    values: [complete, partial, failed]
+    description: >
+      Whether the protocol actually ran. Derived from observed tool results,
+      not from anything the model asserted. A partial run is reported as
+      partial rather than presented as a finished verification.
+  overall_status:
     type: enum
     values: [supported, mixed, contradicted, unverified]
-  trust_score:
-    type: integer_or_null
-    range: 0-100
     description: >
-      Importance-weighted support across falsifiable claims, computed
-      deterministically from the claim table. Null when no falsifiable claim
-      was found, which is reported as verdict=unverified rather than as zero.
+      Derived from the validated claim table by a fixed rule.
+      There is deliberately no numeric trust score: a scalar reads as a
+      probability that the answer is true, which is the one thing evidence
+      retrieval cannot establish.
   summary:
     type: string
+    description: The verifier's prose summary. The only free text a model authored.
   claims:
     type: array
     description: >
-      Per claim: the claim, importance (1 minor, 2 material, 3 decision-critical),
+      Per claim: the claim text, importance (critical | material | minor),
       status (supported | contradicted | unverified | not_falsifiable),
-      confidence, rationale, and evidence references.
+      confidence, rationale, the evidence IDs cited and how each relates, and
+      an `adjusted` note whenever the host changed the model's status.
+  evidence:
+    type: array
+    description: >
+      Every source actually retrieved during this execution: evidence ID,
+      requested URL, resolved URL after redirects, domain, title, retrieval
+      timestamp, SHA-256 of the exact text the verifier read, and whether it
+      was found independently or supplied by the candidate.
+  coverage:
+    type: object
+    description: >
+      claims_selected, claims_checked, critical_claims_total,
+      critical_claims_checked, search_candidates, sources_fetched,
+      distinct_domains.
+  checks:
+    type: object
+    description: >
+      Host-derived protocol flags: independent_search_performed,
+      sources_fetched, candidate_citations_checked,
+      contradiction_search_performed, evidence_references_validated.
   security:
     type: object
     description: >
-      prompt_injection_risk (none | low | medium | high) and the indicators
-      found in the submitted output. Detection is best-effort and is not a
-      guarantee.
-  audit:
+      suspicious_instructions_detected, plus the indicators found in the
+      submitted output and in retrieved pages. Detection is best-effort;
+      capability containment is the actual guarantee.
+  provenance:
     type: object
     description: >
-      SharedOS execution_id, trace_id, the research tools actually invoked, and
-      the turn's status and duration. Derived from the SharedOS execution
-      record, never from model output.
+      SharedOS purpose, execution ID, trace ID, execution status, the research
+      tools actually invoked, and the turn's timings. Read off the SharedOS
+      execution record, never from model output.
+
+guarantees:
+  - Every evidence ID in the receipt corresponds to a page this execution actually retrieved.
+  - Retrieval timestamps, resolved URLs and content digests are generated by trusted code, not by a model.
+  - A citation to evidence that was not retrieved is discarded, and the claim is downgraded to unverified.
+  - A search snippet is discovery only; nothing becomes evidence without being fetched.
+  - Protocol-completion flags reflect observed tool calls, not model self-report.
+  - The verifier held only search and fetch capability, under the purpose trust.verify.
 
 good_for:
   - research results
-  - current facts
-  - prices
-  - schedules
-  - citations
+  - current facts and prices
+  - schedules and deadlines
+  - citations that need checking
   - comparisons
   - extracted web information
 
@@ -97,12 +195,6 @@ not_for:
   - deterministic arithmetic
   - verifying content behind a login
   - guaranteeing that any statement is true
-
-performance:
-  typical_seconds: 45
-  p95_seconds: 90
-  hard_timeout_seconds: 90
-  note: Bounded well below the Arena's five-minute service-call ceiling.
 
 execution:
   runs_on: SharedOS
@@ -123,7 +215,8 @@ execution:
     message text.
 
 limitations:
-  - Verification is evidence-based and can be wrong.
+  - Evidence-based, and evidence can be wrong, missing, or misleading.
   - Absence of evidence is reported as unverified, never as false.
+  - Establishes what was retrieved and what it says, not that a claim is true.
   - Prompt-injection detection is best-effort, not a guarantee.
-  - Only publicly reachable http(s) pages can be used as evidence.
+  - Only publicly reachable http(s) pages can be retrieved as evidence.

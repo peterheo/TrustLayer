@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -217,6 +220,79 @@ describe("Arena service adapter", () => {
 
     it("advertises no trust score", () => {
       expect(JSON.stringify(SERVICE_DESCRIPTORS)).not.toMatch(/trust[_ ]?score/i);
+    });
+  });
+
+  /**
+   * The service card is what another agent reads before buying; the
+   * descriptors are what the code offers. A card that has drifted from the
+   * code is a promise the service does not keep, so the two are pinned
+   * together here rather than by hand.
+   */
+  describe("published service card", () => {
+    const card = readFileSync(
+      fileURLToPath(new URL("../arena/service-card.yaml", import.meta.url)),
+      "utf8",
+    );
+
+    it("names both services at the prices the code charges", () => {
+      for (const descriptor of SERVICE_DESCRIPTORS) {
+        expect(card).toContain(`name: ${descriptor.name}`);
+        expect(card).toContain(`price: ${descriptor.price_credits}`);
+      }
+    });
+
+    it("quotes the method version the receipts actually carry", () => {
+      expect(card).toContain(METHOD_VERSION);
+    });
+
+    it("describes every field of the receipt a buyer will receive", () => {
+      // Snake_case on the card, camelCase in the payload; the mapping is the
+      // point, so both spellings are asserted where they appear.
+      for (const field of [
+        "report_id",
+        "method_version",
+        "protocol_status",
+        "overall_status",
+        "summary",
+        "claims",
+        "evidence",
+        "coverage",
+        "checks",
+        "security",
+        "provenance",
+      ]) {
+        expect(card).toContain(`  ${field}:`);
+      }
+      for (const check of [
+        "independent_search_performed",
+        "sources_fetched",
+        "candidate_citations_checked",
+        "contradiction_search_performed",
+        "evidence_references_validated",
+      ]) {
+        expect(card).toContain(check);
+      }
+    });
+
+    it("promises no trust score and no guarantee of truth", () => {
+      expect(card).not.toMatch(/trust_score/i);
+      expect(card).toMatch(/no numeric trust score/i);
+      expect(card).toMatch(/never as false/i);
+    });
+
+    it("states the latency bounds the descriptors state", () => {
+      for (const descriptor of SERVICE_DESCRIPTORS) {
+        expect(card).toContain(`max_seconds: ${descriptor.max_latency_seconds}`);
+      }
+    });
+
+    it("lists the verifier's real tool surface and nothing more", () => {
+      expect(card).toContain("purpose: trust.verify");
+      expect(card).toContain("- research.search");
+      expect(card).toContain("- research.fetch");
+      expect(card).not.toMatch(/^\s+- files\.\w+$/m);
+      expect(card).not.toMatch(/^\s+- messages\.\w+$/m);
     });
   });
 });

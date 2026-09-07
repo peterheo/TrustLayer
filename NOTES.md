@@ -106,17 +106,23 @@ Per brief rule 1 ("do not invent SharedOS Cloud APIs, Arena APIs,
 service-registration formats, or grant fields") the Arena integration is
 therefore built as a **thin, documented boundary** rather than a guess:
 
-- `src/arena/adapter.ts` exposes `handleServiceCall(payload)` — plain JSON in,
-  plain JSON out — plus `TRUST_VERIFY_DESCRIPTOR`, the price/IO description in
-  a neutral shape.
+- `src/arena/adapter.ts` exposes `handleServiceCall(payload)` for
+  `trust.verify` and `handleCheckCall(payload)` for `trust.check` — plain JSON
+  in, plain JSON out — plus `TRUST_VERIFY_DESCRIPTOR` and
+  `TRUST_CHECK_DESCRIPTOR`, the price/IO descriptions in a neutral shape.
 - `arena/service-card.yaml` carries the semantic content the brief specifies.
   The *field names* will need to be remapped to the organizers' actual schema;
   that is a file edit, not a code change.
 - Nothing in `src/` depends on an unverified Arena type.
 
-**Open item for whoever has organizer access:** bind `handleServiceCall` to the
-real registration/delivery mechanism and confirm the credit price. Everything
-behind that function is complete and tested.
+`arena/service-card.yaml` is kept in step with those descriptors by
+`tests/arena.test.ts` — prices, method version, receipt fields, latency bounds
+and the tool surface are asserted against the code, so the card cannot quietly
+drift into promising something the service does not do.
+
+**Open item for whoever has organizer access:** bind `handleServiceCall` and
+`handleCheckCall` to the real registration/delivery mechanism and confirm the
+credit prices. Everything behind those functions is complete and tested.
 
 ## 6. Deviations from the brief, with reasons
 
@@ -136,9 +142,12 @@ behind that function is complete and tested.
    `{ path: ["web", <validated hostname>], action: "fetch" }` per call. This is
    the pattern `docs/tools.md` prescribes; omitting it is called out there as
    "a scope hole for anything that [takes a resource argument]".
-4. **Trust score excluded from the model's output schema entirely**, per §12.
-   The model cannot emit a score, an audit id, or tool usage — those fields do
-   not exist in `VerifierJudgmentSchema`, so there is nothing to strip.
+4. **No trust score anywhere, and no host-owned field in the model's schema.**
+   v2 removed the scalar entirely rather than renaming it. The model's output
+   is `AdjudicationSubmissionSchema` — a summary, a status per claim, and
+   security indicators. It has no field for a score, a report id, an execution
+   id, a timestamp, a digest, a protocol flag, or tool usage, so there is
+   nothing to strip and nothing to reconcile.
 5. **Model provider.** No credentials were supplied, so the driver is written
    against a `VerifierModel` port with an Anthropic implementation and a
    scripted implementation. The full test suite runs on the scripted model, so
