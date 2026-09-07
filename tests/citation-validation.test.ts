@@ -1,0 +1,169 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { verify } from "../src/api/verify.js";
+import { createTrustLayerHost } from "../src/sharedos/kernel.js";
+import { ScriptedVerifierModel } from "../src/verifier/model.js";
+import {
+  CHALLENGE_DONE,
+  PLAN_STEP,
+  RESEARCH_DONE,
+  adjudicateStep,
+  adjudication,
+  fetchStep,
+  pricingPage,
+  publicDns,
+  searchStep,
+  staticBackend,
+} from "./fixtures.js";
+
+/**
+ * Candidate-supplied citations.
+ *
+ * A URL existing is not the same as a citation being valid, and a source the
+ * candidate handed us is not independent verification. The receipt has to be
+ * able to tell the difference, so the ledger records the origin of every
+ * fetch.
+ */
+describe("candidate citation validation", () => {
+  const CANDIDATE_URL = "https://candidate.example/its-own-source";
+
+  const request = {
+    task: "How much does Widget X cost?",
+    candidateOutput: "Widget X costs $79, according to our source.",
+    sourceUrls: [CANDIDATE_URL],
+  };
+
+  function host() {
+    return createTrustLayerHost({ searchBackend: staticBackend(), resolveHost: publicDns });
+  }
+
+  function stubPages(): void {
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        new Response(pricingPage(), {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("marks a fetched candidate URL as a candidate citation, not independent evidence", async () => {
+    stubPages();
+    const model = new ScriptedVerifierModel([
+      PLAN_STEP,
+      fetchStep(CANDIDATE_URL, "call-1"),
+      RESEARCH_DONE,
+      searchStep("Widget X price", "call-2"),
+      CHALLENGE_DONE,
+      adjudicateStep(),
+    ]);
+
+    const receipt = await verify(request, { host: host(), model });
+
+    expect(receipt.evidence).toHaveLength(1);
+    expect(receipt.evidence[0]?.origin).toBe("candidate_citation");
+    expect(receipt.checks.candidateCitationsChecked).toBe(true);
+  });
+
+  it("marks an independently discovered source as independent", async () => {
+    stubPages();
+    const model = new ScriptedVerifierModel([
+      PLAN_STEP,
+      searchStep("Widget X price", "call-1"),
+      fetchStep("https://example.org/widget-x-pricing", "call-2"),
+      RESEARCH_DONE,
+      searchStep("Widget X price change", "call-3"),
+      CHALLENGE_DONE,
+      adjudicateStep(),
+    ]);
+
+    const receipt = await verify(request, { host: host(), model });
+
+    expect(receipt.evidence[0]?.origin).toBe("independent");
+    // A candidate URL was supplied but never retrieved, so nothing was checked.
+    expect(receipt.checks.candidateCitationsChecked).toBe(false);
+  });
+
+  it("distinguishes both origins within one receipt", async () => {
+    stubPages();
+    const model = new ScriptedVerifierModel([
+      PLAN_STEP,
+      fetchStep(CANDIDATE_URL, "call-1"),
+      searchStep("Widget X price", "call-2"),
+      fetchStep("https://example.org/widget-x-pricing", "call-3"),
+      RESEARCH_DONE,
+      searchStep("Widget X price change", "call-4"),
+      CHALLENGE_DONE,
+      adjudicateStep(
+        adjudication({
+          adjudications: [
+            {
+              claimId: "k1",
+              status: "supported",
+              confidence: 0.85,
+              rationale: "The candidate's own source and an independent page both list $79.",
+              evidence: [
+                { evidenceId: "e1", relation: "supports", note: "candidate's own source" },
+                { evidenceId: "e2", relation: "supports", note: "independently found" },
+              ],
+            },
+          ],
+        }),
+      ),
+    ]);
+
+    const receipt = await verify(request, { host: host(), model });
+
+    const origins = receipt.evidence.map((entry) => entry.origin);
+    expect(origins).toContain("candidate_citation");
+    expect(origins).toContain("independent");
+    expect(receipt.checks.candidateCitationsChecked).toBe(true);
+  });
+
+  it("reports candidateCitationsChecked false when the caller supplied none", async () => {
+    stubPages();
+    const model = new ScriptedVerifierModel([
+      PLAN_STEP,
+      searchStep("Widget X price", "call-1"),
+      fetchStep("https://example.org/widget-x-pricing", "call-2"),
+      RESEARCH_DONE,
+      searchStep("Widget X price change", "call-3"),
+      CHALLENGE_DONE,
+      adjudicateStep(),
+    ]);
+
+    const receipt = await verify(
+      { task: request.task, candidateOutput: request.candidateOutput },
+      { host: host(), model },
+    );
+
+    // Nothing to check is reported as such, never as a check that passed.
+    expect(receipt.checks.candidateCitationsChecked).toBe(false);
+  });
+
+  it("does not let a dead candidate citation become evidence", async () => {
+    vi.stubGlobal("fetch", async () => new Response("gone", { status: 404 }));
+
+    const model = new ScriptedVerifierModel([
+      PLAN_STEP,
+      fetchStep(CANDIDATE_URL, "call-1"),
+      RESEARCH_DONE,
+      searchStep("Widget X price", "call-2"),
+      CHALLENGE_DONE,
+      adjudicateStep(),
+    ]);
+
+    const receipt = await verify(request, { host: host(), model });
+
+    expect(receipt.evidence).toHaveLength(0);
+    expect(receipt.checks.candidateCitationsChecked).toBe(false);
+    // The claim cited e1, which never came into existence.
+    expect(receipt.claims[0]?.status).toBe("unverified");
+    expect(receipt.claims[0]?.adjusted).toMatch(/no retrieved source/i);
+  });
+});
