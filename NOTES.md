@@ -200,3 +200,76 @@ changing one already in the field. It must be bumped if that stops being true.
 comparison, because no comparison has been measured. The README, the service
 card and the personal-agent brief all say so explicitly. Do not soften that
 until `evals/results/` contains a real run.
+
+## 9. Organizer surfaces — what was verified on 2026-09-08
+
+§1 and §5 above were written when no organizer material had been supplied. The
+public site has since been read. This section records what is now **verified**,
+with the page it came from, and what remains genuinely undocumented. It does
+not replace §5's rule: nothing here is invented, and the still-unknown items
+stay unknown until someone with organizer access answers them.
+
+### Verified
+
+- **Three planes, not one.** SharedOS is the kernel *in our process*; SharedOS
+  Cloud is organizer-hosted and read-only with respect to us — "The kernel
+  decides here. We have no write path", "Decision events pushed by your host
+  after the fact", "Nothing dials into your network — your host always
+  initiates" (sharedos.ai/cloud). So **TrustLayer is deployed by us**, anywhere
+  that runs Node. Cloud does not host it. Cloud is in "design partner preview".
+- **Hackathon entry** (sharedos.ai/weekly-hackathon): Discord
+  <https://discord.gg/cfyPXfZCe>, Devpost
+  <https://shared-os-hackathon.devpost.com/register>, then request a **tenant
+  ID and owner address** in `#arena-support`. Event 9–11 September 2026, Arena
+  Night 11 September 21:00–23:00 ET.
+- **What the submission must contain**: representative agent's SharedNet node
+  ID; service name, I/O, price in credits, call instructions; **the SharedOS
+  purpose string and product-agent addresses for the audit trail**; repo link.
+  Ours: purpose `trust.verify`, actor `agent:trustlayer-verifier`, owner
+  `service:trustlayer` until an address is issued.
+- **Tenant identity maps onto `AccessContext.namespaceId`** — "namespaceId:
+  tenant or benchmark world isolation boundary" (docs/host-integration). Hence
+  `SHAREDOS_TENANT_ID` and `SHAREDOS_OWNER_ADDRESS` now flow into both the
+  context and the grants, which must agree or the grant is a scope mismatch.
+- **The HTTP boundary contract** (docs/http-api): `createSharedOSHandler`,
+  `GET /health`, `POST /v1/authorize`, `GET /v1/tools`, `POST /v1/tools/invoke`,
+  `POST /v1/messages`, `POST /v1/turns`; identity enters only through
+  `resolveContext`, never the body; a denial is a 200 with the decision in the
+  payload. Embedding is "the recommended shape for products".
+- **The agent-to-agent layer is `@aicoo/local-agent`** (npm, README and the
+  bundled `aicoo-c2c` skill): open protocol, local bridge, Claude Code / Codex
+  adapters, control plane whose canonical production profile is
+  `https://www.aicoo.io` with spool `~/.aicoo/local-agent/bridge.spool`; CLI
+  `ccd` with `login`, `whoami`, `onboard`, `agents`, `connect`, `send`,
+  `delegate`, `goal`, `inbox`, `offer`, `targets`. Its safety rule — "a message
+  conveys intent and context, not authority" — is the same one TrustLayer runs
+  on.
+
+### Still unknown, and therefore still not invented
+
+- Whether the Devpost "SharedNet node ID" is `ccd whoami`'s `principalId`.
+- How a **paid Arena service call reaches a service**: C2C message to the
+  representative agent, HTTP to a registered URL, or something else.
+- **Where and in what format a service is registered** with its price.
+- **How Arena credits are metered and charged**, and whether 3 / 1 credits are
+  acceptable prices.
+- The **decision-event push**: endpoint, auth, payload.
+- Any deployment requirement (public reachability, allowlist, health probe).
+
+`arena/DEPLOYMENT.md` carries these as a numbered list to paste into
+`#arena-support`. SharedNet's own documentation is explicitly "not documented
+publicly yet" (sharedos.ai/full-picture).
+
+### What was built against the verified part
+
+- `src/api/http.ts` + `src/server.ts`: the callable surface — `/health`,
+  `/v1/services`, `POST /v1/trust.verify`, `POST /v1/trust.check` — with bearer
+  auth, JSON in and an evidence receipt out. `pnpm serve:check` drives the real
+  server over HTTP offline.
+- A `Dockerfile`, because the service is one stateless process and deploying it
+  should not need a decision.
+- The SharedOS HTTP boundary is deliberately **not** mounted: `/v1/turns` and
+  `/v1/tools/invoke` run under our resolved context, so exposing them would
+  lend a caller the verifier's `research.fetch` capability. If the organizers
+  require it, mount `createSharedOSHandler` behind its own context and grants,
+  never the verifier's.

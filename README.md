@@ -289,7 +289,7 @@ body runs.
 ## Tests
 
 ```
-pnpm test        # 232 tests
+pnpm test        # 242 tests
 pnpm typecheck
 ```
 
@@ -381,6 +381,38 @@ that answers `unverified` to everything never errs and is useless.
 `MODEL_API_KEY` rather than emitting numbers that would look like results, and
 `--selftest` labels its output as not a benchmark. Nothing in this README or in
 the Arena copy quotes a measured comparison, because there is not one yet.
+
+## Deploying it
+
+TrustLayer is one stateless Node process — no database, no volume, no queue.
+
+```bash
+pnpm start                      # listens on $PORT (default 8080)
+docker build -t trustlayer .    # or the image
+```
+
+| Route | |
+| --- | --- |
+| `GET /health` | liveness, method version, tenant, service names |
+| `GET /v1/services` | the descriptors: name, price, input, output, guarantees |
+| `POST /v1/trust.verify` | `task` + `candidate_output` (+ `focus_claims`, `source_urls`) → receipt |
+| `POST /v1/trust.check` | one claim → the same receipt |
+
+`TRUSTLAYER_API_TOKEN` sets the bearer token callers must present; unset means
+unauthenticated, which is logged loudly at startup. `pnpm serve:check` boots the
+real server and drives it over HTTP with a scripted model, offline.
+
+The SharedOS HTTP boundary (`/v1/turns`, `/v1/tools/invoke`) is deliberately not
+mounted: those run against our kernel under our resolved context, so exposing
+them would hand any caller holding the token our `research.fetch` capability — a
+fetch proxy with our egress and our budget. The execution record a caller
+actually wants is already in the receipt's `provenance`.
+
+Organizer identity flows in through `SHAREDOS_TENANT_ID` (the
+`AccessContext.namespaceId` *and* every grant's `namespaceId`) and
+`SHAREDOS_OWNER_ADDRESS` (`service:`, `agent:`, `human:` or `group:`). Full
+runbook, including what is still unknown and the exact questions to ask the
+organizers: [`arena/DEPLOYMENT.md`](arena/DEPLOYMENT.md).
 
 ## Running for real
 

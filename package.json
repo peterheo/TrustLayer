@@ -13,7 +13,10 @@
     "test:watch": "vitest",
     "smoke": "tsx scripts/smoke.ts",
     "demo:injection": "tsx scripts/demo-injection.ts",
-    "eval": "tsx evals/run.ts"
+    "eval": "tsx evals/run.ts",
+    "start": "tsx src/server.ts",
+    "dev": "tsx watch src/server.ts",
+    "serve:check": "tsx scripts/serve-check.ts"
   },
   "dependencies": {
     "@aicoo/sharedos": "0.1.0-alpha.4",

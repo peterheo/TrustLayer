@@ -37,3 +37,5 @@ jobs:
       - run: pnpm smoke
       - run: pnpm demo:injection
       - run: pnpm eval --selftest
+      # The deployable path: boots the real HTTP server and calls it.
+      - run: pnpm serve:check
