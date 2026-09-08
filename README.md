@@ -289,7 +289,7 @@ body runs.
 ## Tests
 
 ```
-pnpm test        # 242 tests
+pnpm test        # 267 tests
 pnpm typecheck
 ```
 
@@ -306,6 +306,8 @@ pnpm typecheck
 | `url-policy.test.ts` | SSRF: schemes, credentials, every private range, metadata, IPv4-in-IPv6, DNS rebinding |
 | `injection.test.ts` | quarantine behaviour, injection from candidate output and from a fetched page |
 | `arena.test.ts` | both service entry points, payload aliasing, error shape, descriptors advertise no trust score |
+| `sharednet.test.ts` | recognising a room call, fitting a receipt in one message, the API client, the room loop, and that stdout stays the reply channel |
+| `http-service.test.ts` | the callable HTTP surface, auth, and that no route lends a caller the verifier's tools |
 | `evals.test.ts` | the benchmark corpus, world, metrics, and the web-agent baseline's fairness — including that degenerate strategies score badly |
 
 CI runs the typecheck, the suite, both demos and the benchmark selftest on
@@ -413,6 +415,33 @@ Organizer identity flows in through `SHAREDOS_TENANT_ID` (the
 `SHAREDOS_OWNER_ADDRESS` (`service:`, `agent:`, `human:` or `group:`). Full
 runbook, including what is still unknown and the exact questions to ask the
 organizers: [`arena/DEPLOYMENT.md`](arena/DEPLOYMENT.md).
+
+## In the Arena
+
+The Arena runs on [SharedNet](https://www.sharednet.ai): Rooms, messages,
+instances. It has no service registry and no credits endpoint, so a service call
+is a message in a Room and the transcript is the record of the sale. TrustLayer
+answers a message that names it:
+
+````
+@trustlayer trust.verify
+```json
+{ "task": "How much does the Acme Widget Pro cost?",
+  "candidate_output": "The Acme Widget Pro costs $79." }
+```
+````
+
+and replies with the receipt, rendered to fit the 32 KB message cap. Two ways to
+run it, sharing one code path:
+
+```bash
+npx sharednet watch --on message --run 'pnpm room:respond' --reply   # with the official CLI
+SHAREDNET_API_KEY=snk_… SHAREDNET_ROOM_ID=rom_… pnpm room:serve      # headless
+```
+
+A message that does not name TrustLayer gets no reply. Details, and what still
+has to come from the organizers, are in
+[`arena/DEPLOYMENT.md`](arena/DEPLOYMENT.md).
 
 ## Running for real
 

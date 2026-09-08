@@ -16,7 +16,9 @@
     "eval": "tsx evals/run.ts",
     "start": "tsx src/server.ts",
     "dev": "tsx watch src/server.ts",
-    "serve:check": "tsx scripts/serve-check.ts"
+    "serve:check": "tsx scripts/serve-check.ts",
+    "room:respond": "tsx scripts/sharednet-respond.ts",
+    "room:serve": "tsx scripts/sharednet-room.ts"
   },
   "dependencies": {
     "@aicoo/sharedos": "0.1.0-alpha.4",

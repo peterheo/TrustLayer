@@ -7,6 +7,12 @@ import { config } from "./config.js";
  * search results, grants, and anything from `config.model` or `config.search`
  * beyond a provider name. A verification service handles other agents' work
  * product; keeping it out of the logs is part of the offering.
+ *
+ * Every level writes to **stderr**, including info. For this service stdout is
+ * a payload channel: under `sharednet watch --run … --reply` whatever a command
+ * prints to stdout is posted into the Room as the reply, so a diagnostic line
+ * on stdout would be published to a paying caller as part of their receipt.
+ * Diagnostics belong on stderr, which the CLI logs separately.
  */
 
 type LogLevel = "debug" | "info" | "warn" | "error";
@@ -24,8 +30,7 @@ function emit(level: LogLevel, message: string, fields: LogFields = {}): void {
     timestamp: new Date().toISOString(),
     ...fields,
   });
-  if (level === "error" || level === "warn") process.stderr.write(`${line}\n`);
-  else process.stdout.write(`${line}\n`);
+  process.stderr.write(`${line}\n`);
 }
 
 export const logger = {

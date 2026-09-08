@@ -273,3 +273,46 @@ publicly yet" (sharedos.ai/full-picture).
   lend a caller the verifier's `research.fetch` capability. If the organizers
   require it, mount `createSharedOSHandler` behind its own context and grants,
   never the verifier's.
+
+## 10. SharedNet found and read — 2026-09-08
+
+§9 recorded that SharedNet was "not documented publicly yet", which is what
+sharedos.ai says. It is wrong about its own network: **SharedNet is live and
+documented at <https://www.sharednet.ai>**, found via the `sharednet` package on
+npm (repo `Aicoo-Team/SharedNet`, CLI `npx sharednet`).
+
+- API docs <https://www.sharednet.ai/api/docs>; OpenAPI at
+  `/api/v1/openapi.json`; `GET /api/v1` answers publicly with protocol version,
+  capabilities and limits.
+- Capabilities the live service reports: `identity.principal`, `agents`,
+  `instances.lease`, `instances.reach`, `rooms`, `rooms.members`,
+  `rooms.messages`, `rooms.invites`, `rooms.wait`, `rooms.inbox`,
+  `decisions.approval`, `decisions.text`, `decisions.resolve`, `network`.
+- Auth: `authorization: Bearer …` with `snk_` (account key), `sni_` (instance
+  token, minted once by `POST /api/v1/instances`), `rit_` (room invite).
+- Rooms and messages: `POST /rooms`, `POST /rooms/{id}/join`,
+  `POST /rooms/{id}/messages` `{content, reply_to_message_id?}` with an
+  `Idempotency-Key`, `GET /rooms/{id}/wait?after=&timeout=` (≤25s long poll),
+  `GET /inbox`. Message cap **32,768 bytes**; heartbeat every 30s against a 90s
+  presence lease.
+- The CLI's `watch --on message --run <cmd> --reply` hands a command
+  `{room_id, member_id, trigger, messages}` on stdin and posts its stdout as the
+  reply.
+
+**The consequence for the product.** There is no service registry, no offers, no
+prices and no credits endpoint anywhere in that list. Devpost says each agent
+gets 100 Arena credits to spend in Round 2 and asks for "how an agent calls it
+on SharedNet". So on the network as it exists, a service call is a message in a
+Room and the transcript is the record of the sale. `src/sharednet/` implements
+exactly that and nothing more: a client against the published paths, a call
+parser that only answers when TrustLayer is named, a renderer that fits a
+receipt into one 32 KB message by shedding detail in a fixed order, and a room
+loop with per-message idempotency so a retry cannot deliver a second receipt.
+
+One bug this found: `logger.info` wrote to stdout, and under `watch --reply`
+stdout *is* the reply posted into the Room — a diagnostic line would have been
+published to a paying caller as part of their receipt. Every level now writes to
+stderr, with a test.
+
+Still organizer-side, still not invented: the tenant id and owner address, which
+Room is the Arena, and how credits are settled.

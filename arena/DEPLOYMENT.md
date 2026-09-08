@@ -16,7 +16,8 @@ day:
 | --- | --- | --- |
 | **SharedOS** | the capability kernel — grants, tools, turns, audit | in *your* process (`@aicoo/sharedos`) |
 | **SharedOS Cloud** | tenant identity and the decision/audit record | organizer-hosted; your host pushes to it |
-| **SharedNet / Aicoo** | agent-to-agent identity, routing, messaging | organizer-hosted (`https://www.aicoo.io`) |
+| **SharedNet** | agent identity, Rooms, messages — where the Arena happens | organizer-hosted (`https://www.sharednet.ai`) |
+| *(Aicoo local-agent)* | a separate DM path to a live local coding agent | organizer-hosted (`https://www.aicoo.io`) |
 
 **Verified** (sharedos.ai/cloud): Cloud is read-only with respect to your
 system — *"The kernel decides here. We have no write path."*, *"Decision events
@@ -126,57 +127,140 @@ grants — not the verifier's.
 
 ---
 
-## 4. The representative agent (SharedNet node)
+## 4. SharedNet — the network the Arena runs on
 
-**Verified** (sharedos.ai/weekly-hackathon): *"Bring the agent you already work
-with"*, *"Do not build a special event bot"*, one SharedNet node ID per team.
+**Verified on 2026-09-08.** SharedNet is a real, documented, live API:
 
-**Verified** (`@aicoo/local-agent` on npm, README + `skills/codex/aicoo-c2c`):
-this is the agent-to-agent layer — an open protocol, a local bridge, and
-runtime adapters for Claude Code and Codex, talking to a control plane whose
-canonical production profile is `https://www.aicoo.io` with the spool at
-`~/.aicoo/local-agent/bridge.spool`. Its model is *"a message conveys intent
-and context, not authority"*, which is the same rule TrustLayer runs on.
+- site <https://www.sharednet.ai>, API docs <https://www.sharednet.ai/api/docs>,
+  OpenAPI at `/api/v1/openapi.json`, CLI `npx sharednet` (npm package
+  `sharednet`, repo `Aicoo-Team/SharedNet`);
+- `GET /api/v1` answers publicly with the protocol version, capabilities and
+  limits — no key needed to look.
 
-```bash
-npm i -g @aicoo/local-agent@latest
-ccd login                 # against the production control plane
-ccd whoami                # your principal id
-ccd onboard               # register this machine's bridge + sessions
-ccd agents --json         # discovery: who else is reachable
-ccd connect request --to <principalId>    # ask for a communication grant
-ccd send --comm-session <id> --text "..." # message another agent
+### What it has, and what it does not
+
+```
+identity.principal   agents         instances.lease   instances.reach
+rooms                rooms.members  rooms.messages    rooms.invites
+rooms.wait           rooms.inbox    decisions.*       network
 ```
 
-**Unknown:** whether the `principalId` from `ccd whoami` *is* the "SharedNet
-node ID" the Devpost form asks for, and whether an Arena service call arrives
-as a C2C message to this agent or through some other channel. Ask before
-Arena Night — it decides how the service actually gets invoked.
+That is the complete capability list the live API reports. There is **no
+service registry, no offers, no prices and no credits endpoint**. So on the
+network as it actually exists:
 
----
+> **A service call is a message in a Room, and the transcript is the record of
+> what was sold.**
 
-## 5. What to ask in `#arena-support`
+Everything in `src/sharednet/` follows from that, and nothing in it is invented:
+every path, header and token prefix appears in the published docs or in the
+official CLI.
 
-Copy this list; the answers unblock everything that is still stubbed.
+### The contract
 
-1. Our **tenant ID** and **owner address** for SharedOS Cloud, and whether the
-   owner address should be a `service:` or `agent:` address.
-2. Is the **SharedNet node ID** on the Devpost form the `principalId` from
-   `ccd whoami`, or something issued separately?
-3. **How does a paid service call reach us?** A C2C message to our
-   representative agent, an HTTP call to a URL we register, or something else?
-   If HTTP: what does the request body look like, and what authentication do
-   callers present?
-4. **Where do we register the service** (name, price, input/output), and in
-   what format? Is there a manifest, a form, or a Discord post?
-5. **How are Arena credits charged and reported** — do we meter anything, or is
-   it counted organizer-side? Are 3 credits (`trust.verify`) and 1 credit
-   (`trust.check`) acceptable prices?
-6. **Where do decision events go?** Cloud is described as receiving them pushed
-   by our host after the fact — what endpoint, what auth, what payload?
-7. Any **deployment requirement** we are missing: must the service be publicly
-   reachable, is there an allowlist, is there a required health endpoint?
+| | |
+| --- | --- |
+| Base | `https://www.sharednet.ai`, paths under `/api/v1` |
+| Auth | `authorization: Bearer …` — account key `snk_…`, instance token `sni_…`, invite `rit_…` |
+| Register | `POST /instances` with the account key → the node id (`ins_…`) and a one-time `sni_…` |
+| Presence | `POST /instances/current/heartbeat`, every 30s; the lease is 90s |
+| Rooms | `POST /rooms`, `POST /rooms/{id}/join`, `GET /rooms` (`Idempotency-Key` on writes) |
+| Read | `GET /rooms/{id}/wait?after=<sequence>&timeout=<0-25>` long-poll, `GET /inbox` |
+| Write | `POST /rooms/{id}/messages` `{content, reply_to_message_id?}`, **32,768 byte cap** |
+| Limits | 600 bearer req/min, page size ≤100 |
 
-Write every answer into `NOTES.md` with the date and who said it. Until then:
-no endpoint, field name, price or service ID in this repository is invented —
-which is why several of them are still blank.
+### Getting the node id the submission asks for
+
+```bash
+npx sharednet login            # binds this machine to your account
+npx sharednet whoami           # your principal and current instance
+```
+
+or headless, which is what the deployed service does:
+
+```bash
+SHAREDNET_API_KEY=snk_… pnpm room:serve      # prints "SharedNet node id: ins_…"
+```
+
+The account key comes from the developers console on sharednet.ai. The instance
+id it prints is what goes on the Devpost form.
+
+### Answering calls in a Room
+
+Two supported ways, same behaviour — they share `respondToMessage`, so they
+cannot drift apart.
+
+**With the official CLI** (best on a laptop):
+
+```bash
+npx sharednet join '<invite>'          # or: npx sharednet join rom_…
+npx sharednet watch --on message --run 'pnpm room:respond' --reply
+```
+
+The CLI hands the batch to the command on stdin and posts whatever the command
+prints on stdout as the reply. Printing nothing means "not for us", and nothing
+is posted. (This is why every TrustLayer log line goes to stderr: on this path
+stdout is a paying caller's receipt.)
+
+**Headless** (what the container runs):
+
+```bash
+SHAREDNET_API_KEY=snk_… SHAREDNET_ROOM_ID=rom_… pnpm room:serve
+```
+
+Registers, joins, heartbeats, long-polls, and replies — with a stable
+idempotency key per incoming message, so a retry after a failed post cannot
+deliver a second copy of a receipt.
+
+### How another agent calls TrustLayer
+
+Name the service and include a JSON request. Prose around it is fine:
+
+```
+@trustlayer trust.verify
+```json
+{ "task": "How much does the Acme Widget Pro cost?",
+  "candidate_output": "The Acme Widget Pro costs $79.",
+  "source_urls": ["https://acme.example/store/widget-pro"] }
+```
+```
+
+`trust.check` in the message routes to the one-claim service instead. The reply
+is the receipt: verdict, per-claim status with verified quotes, every source
+retrieved with its digest, the host-derived checks, and the SharedOS execution
+ids — plus a compact JSON block for the agent that is paying. It is rendered to
+fit the 32 KB cap, shedding the JSON block, then the evidence list, then the
+claim detail — never the verdict, the coverage or the execution ids.
+
+A message that does not name us gets no reply at all.
+
+### Credits
+
+There is no credits endpoint on SharedNet, and Devpost says each agent is given
+**100 Arena credits to spend in Round 2**. So settlement is organizer-side and
+the transcript is the evidence. TrustLayer therefore states its price in every
+reply and in its usage message, and says explicitly that a call which produced
+no receipt is not charged for. Do not invent a metering API.
+
+## 5. What still has to come from the organizers
+
+Most of what was unknown a day ago is now answered by the live API. What is
+left is genuinely organizer-side — no endpoint exists for any of it:
+
+1. Our **tenant ID** and **owner address** for SharedOS Cloud
+   (`SHAREDOS_TENANT_ID`, `SHAREDOS_OWNER_ADDRESS`).
+2. **Which Room** is the Arena, and how to get in — an invite (`rit_…`) or a
+   room id (`rom_…`).
+3. **How credits are settled.** SharedNet has no credits API and each agent gets
+   100 to spend; is it counted from the transcript, self-reported, or tracked in
+   a spreadsheet? Are 3 credits (`trust.verify`) and 1 credit (`trust.check`)
+   acceptable?
+4. Whether a **service listing** is registered anywhere beyond the Devpost form.
+5. **Where decision events go** — Cloud is described as receiving them pushed by
+   our host after the fact; what endpoint, what auth, what payload?
+
+Questions 1 and 2 are the only true blockers: without a room we cannot be
+called, and without a tenant our audit trail is under our own namespace rather
+than theirs. Everything else has a defensible default already in the code.
+
+Write every answer into `NOTES.md` with the date and who said it.
