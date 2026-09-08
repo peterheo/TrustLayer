@@ -316,3 +316,36 @@ stderr, with a test.
 
 Still organizer-side, still not invented: the tenant id and owner address, which
 Room is the Arena, and how credits are settled.
+
+## 11. SharedNet, checked against the running service — 2026-09-08
+
+An account key arrived, so §10's reading was tested rather than trusted. The
+published docs page and the live service disagree, and two of those
+disagreements were bugs in our client that only a real call could have found:
+
+| | Docs page | The service |
+| --- | --- | --- |
+| credential field | `instance_token` | **`token`** |
+| id formats | `ins_…`, `pri_…` | **`i_…`, `p_…`**, ten characters |
+| `cli_version` | not called out | **required**; without it, `validation_failed` |
+| `runtime_metadata` | unspecified | **flat string values only** — an array or nested object is rejected |
+| unknown top-level fields | unspecified | rejected |
+
+Both bugs are fixed and pinned by tests written to the real shapes; the client
+still accepts the docs-page spelling of the token so a docs-shaped response is
+not silently tokenless.
+
+Also verified: registering with the same 64-lowercase-hex `local_instance_key`
+returns **200 and the same instance id** instead of minting a new one. That is
+what keeps a published node id true across restarts, so the client now derives
+one from the deployment rather than letting the seat move. Errors carry a
+`request_id` (`req_…`), which is now in the host-side error detail — traceable
+in support, never returned to a caller.
+
+Registered seat for this deployment: **`i_elpBPXvchg`**, principal
+`p_mrg7wm7lcS`, reach `public`, lease 90s with a 30s heartbeat. `GET /rooms`
+returns an empty list — there is no Arena room yet.
+
+Probing created a handful of short-lived instances on the account while the
+contract was being pinned down; they lapse when their leases expire, and the
+limit is 100 active per principal.

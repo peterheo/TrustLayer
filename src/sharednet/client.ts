@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { TrustLayerError } from "../errors.js";
+import { METHOD_VERSION } from "../evidence/schemas.js";
 
 /**
  * A client for the SharedNet API.
@@ -18,6 +19,35 @@ import { TrustLayerError } from "../errors.js";
  */
 
 export const SHAREDNET_DEFAULT_BASE_URL = "https://www.sharednet.ai";
+
+/** Sent as `cli_version`, which the API requires. */
+const CLI_VERSION = "trustlayer-0.1.0";
+
+/**
+ * A stable identity for this deployment's seat.
+ *
+ * Registering with the same `local_instance_key` returns **200 and the same
+ * instance id** instead of minting a new one (verified against the live API on
+ * 2026-09-08). That is what keeps the node id on a submission form true after a
+ * restart or a redeploy — and it is why this is derived rather than random.
+ *
+ * The API requires 64 lowercase hex characters, which is the shape of the
+ * HMAC the official CLI sends. `SHAREDNET_INSTANCE_KEY` overrides it outright;
+ * otherwise it is a digest of the seed, so two deployments of the same product
+ * can hold separate seats by setting `SHAREDNET_INSTANCE_SEED`.
+ */
+export function localInstanceKey(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const explicit = env["SHAREDNET_INSTANCE_KEY"]?.trim().toLowerCase();
+  if (explicit !== undefined && /^[0-9a-f]{64}$/.test(explicit)) return explicit;
+
+  const seed =
+    env["SHAREDNET_INSTANCE_SEED"]?.trim() ??
+    `trustlayer:${env["SHAREDOS_TENANT_ID"]?.trim() ?? "default"}`;
+
+  return createHash("sha256").update(seed, "utf8").digest("hex");
+}
 
 /** The room message cap, from the API's published limits. */
 export const MAX_MESSAGE_BYTES = 32_768;
@@ -40,11 +70,26 @@ export interface MessagePage {
   readonly next_cursor?: string;
 }
 
+/**
+ * What `POST /instances` really returns.
+ *
+ * Verified against the live API on 2026-09-08. Note `token`, not
+ * `instance_token`: the published docs page names the credential differently
+ * from the service, and the service is what counts. Ids are `i_…` and `p_…`
+ * with ten characters, not the `ins_`/`pri_` the docs page shows.
+ */
 export interface InstanceRegistration {
   /** The node id another agent addresses, and the one the submission asks for. */
-  readonly instance: { readonly id: string; readonly reach?: string };
+  readonly instance: {
+    readonly id: string;
+    readonly principal_id?: string;
+    readonly reach?: string;
+    readonly status?: string;
+    readonly lease_expires_at?: string;
+  };
   /** Returned once, never again. Held only in memory here. */
-  readonly instance_token: string;
+  readonly token: string;
+  readonly heartbeat_after_seconds?: number;
 }
 
 export interface SharedNetClientOptions {
@@ -118,10 +163,12 @@ export class SharedNetClient {
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
 
     if (!response.ok) {
-      const error = payload["error"] as { code?: unknown } | undefined;
+      const error = payload["error"] as { code?: unknown; request_id?: unknown } | undefined;
       const code = typeof error?.code === "string" ? error.code : `http_${response.status}`;
-      // The token is never in the message, and neither is the body we sent.
-      throw new TrustLayerError("SHAREDOS_FAILURE", `sharednet_${code}`);
+      // The request id makes an API-side failure traceable in support; the
+      // token is never in the message, and neither is the body we sent.
+      const requestId = typeof error?.request_id === "string" ? ` (${error.request_id})` : "";
+      throw new TrustLayerError("SHAREDOS_FAILURE", `sharednet_${code}${requestId}`);
     }
 
     return payload as T;
@@ -138,7 +185,14 @@ export class SharedNetClient {
     readonly runtimeKind?: string;
     readonly reach?: "public" | "private";
     readonly agentId?: string;
-    readonly metadata?: Record<string, unknown>;
+    /**
+     * Free-form metadata. **String values only** — the API rejects arrays and
+     * nested objects with `validation_failed`, which is the kind of thing only
+     * a real call tells you.
+     */
+    readonly metadata?: Record<string, string>;
+    /** 64 lowercase hex characters. Defaults to this deployment's stable key. */
+    readonly localInstanceKey?: string;
   } = {}): Promise<InstanceRegistration> {
     if (this.#apiKey === undefined || this.#apiKey === "") {
       throw new TrustLayerError("INVALID_INPUT", "SHAREDNET_API_KEY is required to register");
@@ -149,20 +203,37 @@ export class SharedNetClient {
       "/instances",
       this.#apiKey,
       {
+        // Both are required; omitting either is a validation failure.
         runtime_kind: options.runtimeKind ?? "service",
-        cli_version: "trustlayer",
+        cli_version: CLI_VERSION,
+        // Keeps the node id stable across restarts, so the id on the
+        // submission form does not go stale the first time we redeploy.
+        local_instance_key: options.localInstanceKey ?? localInstanceKey(),
         ...(options.agentId === undefined ? {} : { agent_id: options.agentId }),
         ...(options.reach === undefined ? {} : { reach: options.reach }),
         runtime_metadata: {
           product: "trustlayer",
-          services: ["trust.verify", "trust.check"],
+          // Flat strings: the services are named here rather than listed,
+          // because the API rejects an array.
+          services: "trust.verify,trust.check",
+          method_version: METHOD_VERSION,
           ...options.metadata,
         },
       },
     );
 
-    this.#instanceToken = registration.instance_token;
-    return registration;
+    // The service calls it `token`; the docs page calls it `instance_token`.
+    // Accept either so a docs-shaped response is not silently tokenless.
+    const token =
+      registration.token ??
+      (registration as unknown as { instance_token?: string }).instance_token;
+
+    if (typeof token !== "string" || token === "") {
+      throw new TrustLayerError("SHAREDOS_FAILURE", "sharednet_registration_without_token");
+    }
+
+    this.#instanceToken = token;
+    return { ...registration, token };
   }
 
   #token(): string {
@@ -181,6 +252,11 @@ export class SharedNetClient {
     return this.#request("POST", `/rooms/${encodeURIComponent(roomId)}/join`, this.#token(), undefined, {
       "idempotency-key": randomUUID(),
     });
+  }
+
+  /** Who this token says we are, and the lease it currently holds. */
+  async instanceCurrent(): Promise<unknown> {
+    return this.#request("GET", "/instances/current", this.#token());
   }
 
   async listRooms(): Promise<unknown> {

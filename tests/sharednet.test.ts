@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { SharedNetClient, MAX_MESSAGE_BYTES } from "../src/sharednet/client.js";
+import { SharedNetClient, MAX_MESSAGE_BYTES, localInstanceKey } from "../src/sharednet/client.js";
 import {
   compactReceipt,
   parseCall,
@@ -294,21 +294,77 @@ describe("sharednet client", () => {
   }
 
   it("registers an instance with the account key and keeps the token", async () => {
+    // The real response shape, verified against the live API on 2026-09-08.
     const { calls, fetchImpl } = stubFetch(() =>
-      ok({ instance: { id: "ins_abc" }, instance_token: "sni_token" }),
+      ok({
+        instance: { id: "i_mwYPHdmxi0", principal_id: "p_mrg7wm7lcS", reach: "public" },
+        token: "sni_token",
+        heartbeat_after_seconds: 30,
+      }),
     );
     const client = new SharedNetClient({ apiKey: "snk_key", fetch: fetchImpl });
 
     const registration = await client.registerInstance({ reach: "public" });
 
-    expect(registration.instance.id).toBe("ins_abc");
+    expect(registration.instance.id).toBe("i_mwYPHdmxi0");
     expect(client.instanceToken).toBe("sni_token");
     expect(calls[0]?.url).toBe("https://www.sharednet.ai/api/v1/instances");
     const headers = calls[0]?.init.headers as Record<string, string>;
     expect(headers["authorization"]).toBe("Bearer snk_key");
-    expect(JSON.parse(String(calls[0]?.init.body))).toMatchObject({
-      runtime_kind: "service",
-      runtime_metadata: { product: "trustlayer" },
+
+    const body = JSON.parse(String(calls[0]?.init.body)) as Record<string, unknown>;
+    // Both fields are required; the API rejects the request without either.
+    expect(body["runtime_kind"]).toBe("service");
+    expect(typeof body["cli_version"]).toBe("string");
+    // Metadata values must be flat strings — an array is validation_failed.
+    for (const value of Object.values(body["runtime_metadata"] as Record<string, unknown>)) {
+      expect(typeof value).toBe("string");
+    }
+  });
+
+  it("registers with a stable key, so a restart keeps the same node id", async () => {
+    const { calls, fetchImpl } = stubFetch(() => ok({ instance: { id: "i_abc" }, token: "sni_t" }));
+    const client = new SharedNetClient({ apiKey: "snk_key", fetch: fetchImpl });
+
+    await client.registerInstance();
+
+    // The API returns 200 and the existing instance for a key it has seen
+    // before, which is what keeps a published node id true after a redeploy.
+    const body = JSON.parse(String(calls[0]?.init.body)) as Record<string, unknown>;
+    expect(body["local_instance_key"]).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("derives that key from the deployment, and lets it be set outright", () => {
+    const a = localInstanceKey({ SHAREDOS_TENANT_ID: "tenant-a" });
+    const b = localInstanceKey({ SHAREDOS_TENANT_ID: "tenant-b" });
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    // Same deployment, same seat; a different tenant is a different seat.
+    expect(localInstanceKey({ SHAREDOS_TENANT_ID: "tenant-a" })).toBe(a);
+    expect(b).not.toBe(a);
+
+    const explicit = "f".repeat(64);
+    expect(localInstanceKey({ SHAREDNET_INSTANCE_KEY: explicit })).toBe(explicit);
+    // A malformed override is ignored rather than sent and rejected.
+    expect(localInstanceKey({ SHAREDNET_INSTANCE_KEY: "nonsense" })).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("accepts the docs-page spelling of the token as well as the live one", async () => {
+    const { fetchImpl } = stubFetch(() =>
+      ok({ instance: { id: "i_abc" }, instance_token: "sni_docs_shape" }),
+    );
+    const client = new SharedNetClient({ apiKey: "snk_key", fetch: fetchImpl });
+
+    await client.registerInstance();
+
+    expect(client.instanceToken).toBe("sni_docs_shape");
+  });
+
+  it("refuses a registration that came back without a token", async () => {
+    const { fetchImpl } = stubFetch(() => ok({ instance: { id: "i_abc" } }));
+    const client = new SharedNetClient({ apiKey: "snk_key", fetch: fetchImpl });
+
+    await expect(client.registerInstance()).rejects.toMatchObject({
+      detail: "sharednet_registration_without_token",
     });
   });
 
@@ -357,7 +413,11 @@ describe("sharednet client", () => {
     );
     const client = new SharedNetClient({ instanceToken: "sni_secret", fetch: fetchImpl });
 
-    await expect(client.listRooms()).rejects.toMatchObject({ detail: "sharednet_room_not_found" });
+    // The request id travels in the host-side detail, so an API-side failure
+    // is traceable in support without the body reaching the caller.
+    await expect(client.listRooms()).rejects.toMatchObject({
+      detail: "sharednet_room_not_found (req_1)",
+    });
   });
 
   it("will not talk to a non-HTTPS origin", () => {

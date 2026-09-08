@@ -18,7 +18,8 @@
     "dev": "tsx watch src/server.ts",
     "serve:check": "tsx scripts/serve-check.ts",
     "room:respond": "tsx scripts/sharednet-respond.ts",
-    "room:serve": "tsx scripts/sharednet-room.ts"
+    "room:serve": "tsx scripts/sharednet-room.ts",
+    "node:id": "tsx scripts/sharednet-node.ts"
   },
   "dependencies": {
     "@aicoo/sharedos": "0.1.0-alpha.4",

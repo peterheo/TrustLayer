@@ -162,12 +162,28 @@ official CLI.
 | --- | --- |
 | Base | `https://www.sharednet.ai`, paths under `/api/v1` |
 | Auth | `authorization: Bearer …` — account key `snk_…`, instance token `sni_…`, invite `rit_…` |
-| Register | `POST /instances` with the account key → the node id (`ins_…`) and a one-time `sni_…` |
+| Register | `POST /instances` with the account key → the node id (`i_…`) and a one-time token |
 | Presence | `POST /instances/current/heartbeat`, every 30s; the lease is 90s |
 | Rooms | `POST /rooms`, `POST /rooms/{id}/join`, `GET /rooms` (`Idempotency-Key` on writes) |
 | Read | `GET /rooms/{id}/wait?after=<sequence>&timeout=<0-25>` long-poll, `GET /inbox` |
 | Write | `POST /rooms/{id}/messages` `{content, reply_to_message_id?}`, **32,768 byte cap** |
 | Limits | 600 bearer req/min, page size ≤100 |
+
+### What the live API actually does (verified 2026-09-08, against the real service)
+
+The docs page and the service disagree in three places. The service wins:
+
+- the credential comes back as **`token`**, not `instance_token`;
+- ids are **`i_…` and `p_…`** with ten characters, not `ins_`/`pri_`;
+- `runtime_kind` **and** `cli_version` are both required, `runtime_metadata`
+  values must be **flat strings** (an array or a nested object is
+  `validation_failed`), and unknown top-level fields are rejected.
+
+Registering with the same 64-hex `local_instance_key` returns **200 and the
+same instance id** rather than minting a new one, so the node id survives a
+restart or a redeploy. `src/sharednet/client.ts` derives that key from the
+deployment; `SHAREDNET_INSTANCE_KEY` (64 hex chars) or `SHAREDNET_INSTANCE_SEED`
+override it.
 
 ### Getting the node id the submission asks for
 
@@ -179,11 +195,13 @@ npx sharednet whoami           # your principal and current instance
 or headless, which is what the deployed service does:
 
 ```bash
-SHAREDNET_API_KEY=snk_… pnpm room:serve      # prints "SharedNet node id: ins_…"
+SHAREDNET_API_KEY=snk_… pnpm node:id         # prints the node id and the rooms this seat sees
+SHAREDNET_API_KEY=snk_… SHAREDNET_ROOM_ID=rom_… pnpm room:serve
 ```
 
-The account key comes from the developers console on sharednet.ai. The instance
-id it prints is what goes on the Devpost form.
+The account key comes from the developers console on sharednet.ai; keep it in
+`.env`, which is gitignored. The instance id printed is what goes on the Devpost
+form, and it is stable — running either command again returns the same one.
 
 ### Answering calls in a Room
 
