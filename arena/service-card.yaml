@@ -159,7 +159,10 @@ output:
     description: >
       Host-derived protocol flags: independent_search_performed,
       sources_fetched, candidate_citations_checked,
-      contradiction_search_performed, evidence_references_validated.
+      contradiction_search_performed, contradiction_search_produced_candidates,
+      contradiction_evidence_fetched, evidence_references_validated.
+      Searching for a refutation and retrieving one are reported separately;
+      a challenge that found leads and opened none leaves the protocol partial.
   security:
     type: object
     description: >

@@ -32,7 +32,9 @@ const SHARED_OUTPUT_DESCRIPTION = {
   claims: "per claim: status, importance, confidence, rationale, and cited evidence IDs",
   evidence: "every source actually retrieved: URL, resolved URL, domain, timestamp, SHA-256",
   coverage: "how much of the selected material was investigated with real evidence",
-  checks: "host-derived flags: independent search, sources fetched, contradiction search, citations validated",
+  checks:
+    "host-derived flags: independent search, sources fetched, candidate citations checked, " +
+    "contradiction search, contradiction evidence actually retrieved, citations validated",
   security: "instruction-like content found in the submitted output or retrieved pages",
   provenance: "SharedOS purpose, execution id, trace id, and the tools actually invoked",
 } as const;

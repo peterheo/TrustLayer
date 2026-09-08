@@ -91,11 +91,18 @@ describe("verification behaviour", () => {
     return { summary, adjudications, suspiciousInstructions: { detected: false, indicators: [] } };
   }
 
-  /** plan -> discover -> fetch -> challenge -> adjudicate, with the fetches given. */
+  /**
+   * plan -> discover -> fetch -> challenge -> adjudicate.
+   *
+   * The challenge phase both searches and retrieves: a challenge that finds
+   * leads and opens none of them is reported as an incomplete protocol, so a
+   * script that means to run the whole protocol has to fetch there too.
+   */
   function script(
     plan: ModelStep,
     fetches: readonly string[],
     final: AdjudicationSubmission,
+    challengeFetches: readonly string[] = [PRICE_CHANGE],
   ): ModelStep[] {
     return [
       plan,
@@ -103,6 +110,7 @@ describe("verification behaviour", () => {
       ...fetches.map((url, index) => fetchStep(url, `call-fetch-${index + 1}`)),
       RESEARCH_DONE,
       searchStep("Widget X price wrong OR increase OR discontinued", "call-challenge"),
+      ...challengeFetches.map((url, index) => fetchStep(url, `call-challenge-fetch-${index + 1}`)),
       CHALLENGE_DONE,
       adjudicateStep(final),
     ];
@@ -307,6 +315,9 @@ describe("verification behaviour", () => {
           ],
           "The price quoted was correct until September and is now out of date.",
         ),
+        // The price-change page was already retrieved during research; the
+        // challenge phase goes looking somewhere else.
+        [REVIEW],
       ),
     );
 
@@ -333,7 +344,7 @@ describe("verification behaviour", () => {
     const model = new ScriptedVerifierModel(
       script(
         planStep({ text: "Widget X costs $79.", importance: "critical" }),
-        [PRICING, PRICE_CHANGE],
+        [PRICING],
         judgment(
           [
             {

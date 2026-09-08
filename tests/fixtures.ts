@@ -96,7 +96,11 @@ export function adjudicateStep(submission = adjudication()): ModelStep {
 
 /**
  * The full happy path: plan, search, fetch, finish research, challenge-search,
- * finish challenge, adjudicate.
+ * fetch what the challenge turned up, finish challenge, adjudicate.
+ *
+ * The challenge fetch is not decoration. A challenge that finds leads and
+ * opens none of them is a search, not a check, and the protocol reports it as
+ * incomplete — so the happy path has to actually retrieve one.
  */
 export function fullProtocolScript(final = adjudication()): ModelStep[] {
   return [
@@ -105,6 +109,7 @@ export function fullProtocolScript(final = adjudication()): ModelStep[] {
     fetchStep("https://example.org/widget-x-pricing", "call-2"),
     RESEARCH_DONE,
     searchStep("Widget X price increase", "call-3"),
+    fetchStep("https://example.com/widget-price-change", "call-4"),
     CHALLENGE_DONE,
     adjudicateStep(final),
   ];

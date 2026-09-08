@@ -70,6 +70,13 @@ const MAX_HOST_CANDIDATE_FETCHES = 3;
 /** The extracted text handed back for a host-fetched citation. */
 const HOST_FETCH_TEXT_BUDGET = 4_000;
 
+/** How many leads a search returned, from the tool's own output. */
+function searchResultCount(output: unknown): number {
+  if (typeof output !== "object" || output === null) return 0;
+  const count = (output as Record<string, unknown>)["candidateCount"];
+  return typeof count === "number" && Number.isFinite(count) ? count : 0;
+}
+
 /** The URL a fetch result says it retrieved, as the tool recorded it. */
 function evidenceUrlOf(output: unknown): string | undefined {
   if (typeof output !== "object" || output === null) return undefined;
@@ -165,16 +172,23 @@ export function createVerifierDriver(
       }
 
       /**
-       * The next citation the host should retrieve, if it can afford to.
+       * Calls set aside for the challenge phase: one search and one fetch.
        *
-       * One tool call of headroom is left below the budget so forcing a
-       * citation check can never cost the challenge search: a receipt that
-       * checked the candidate's sources but skipped contradiction hunting
-       * would be a worse trade than the one it replaced.
+       * Research — the model's own and the host's citation chasing — stops
+       * here. A receipt that checked every source it was handed but never
+       * looked for the one that would refute the claim would be a worse trade
+       * than the one it replaced.
        */
+      const CHALLENGE_RESERVE = 2;
+
+      function researchBudget(): number {
+        return Math.max(1, options.toolCallBudget - CHALLENGE_RESERVE);
+      }
+
+      /** The next citation the host should retrieve, if it can afford to. */
       function nextCitationToFetch(): string | undefined {
         if (hostFetchesIssued >= MAX_HOST_CANDIDATE_FETCHES) return undefined;
-        if (toolCallsSpent + 1 > options.toolCallBudget - 1) return undefined;
+        if (toolCallsSpent + 1 > researchBudget()) return undefined;
         return unfetchedCitations.shift();
       }
 
@@ -269,7 +283,14 @@ export function createVerifierDriver(
             observation = openingObservation();
           } else {
             const succeeded = input.result.status === "succeeded";
-            protocol.recordToolResult(input.result.tool, succeeded);
+            // The count comes from the search tool's own output, which is host
+            // code — so "the challenge search found leads" is observed, not
+            // reported by the model.
+            protocol.recordToolResult(
+              input.result.tool,
+              succeeded,
+              succeeded ? searchResultCount(input.result.output) : 0,
+            );
 
             if (hostIssuedCalls.has(input.result.callId)) {
               // A citation the host chased itself. Record what it produced,
@@ -326,8 +347,20 @@ export function createVerifierDriver(
                 // outcome the host would rather have.
                 citationFetched(decision.arguments["url"]);
               }
-              // Out of budget: stop researching and adjudicate on what we have,
-              // which yields a `partial` receipt rather than a hung turn.
+
+              // Research overran its share of the budget. Move to the
+              // challenge phase rather than to adjudication: the reserve
+              // exists precisely so contradiction hunting still happens.
+              const researching = protocol.phase === "discover" || protocol.phase === "fetch";
+              if (researching && toolCallsSpent > researchBudget()) {
+                protocol.fail(protocol.phase, "research budget exhausted");
+                toolCallsSpent -= 1;
+                observation = { kind: "instruction", text: enterChallenge().instruction };
+                continue;
+              }
+
+              // Out of budget entirely: adjudicate on what we have, which
+              // yields a `partial` receipt rather than a hung turn.
               if (toolCallsSpent > options.toolCallBudget) {
                 protocol.fail(protocol.phase, "tool call budget exhausted");
                 enterPhase("adjudicate");

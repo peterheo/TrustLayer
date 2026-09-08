@@ -120,15 +120,28 @@ describe("candidate citation validation", () => {
       expect(receipt.provenance.toolsUsed).toContain("research.fetch");
     });
 
-    it("still runs the contradiction search after chasing citations", async () => {
+    it("leaves room for the challenge phase to search and to fetch", async () => {
       stubPages();
       const model = new ScriptedVerifierModel([
         PLAN_STEP,
         searchStep("Widget X price", "call-1"),
         RESEARCH_DONE,
         searchStep("Widget X price change", "call-2"),
+        fetchStep("https://example.com/widget-price-change", "call-3"),
         CHALLENGE_DONE,
-        adjudicateStep(),
+        adjudicateStep(
+          adjudication({
+            adjudications: [
+              {
+                claimId: "k1",
+                status: "supported",
+                confidence: 0.9,
+                rationale: "An independently retrieved page supports the price.",
+                evidence: [{ evidenceId: "e2", relation: "supports", note: "independent" }],
+              },
+            ],
+          }),
+        ),
       ]);
 
       const receipt = await verify(request, { host: host(), model });
@@ -137,6 +150,7 @@ describe("candidate citation validation", () => {
       // that checked the candidate's sources but skipped contradiction hunting
       // would be a worse trade than the one it replaced.
       expect(receipt.checks.contradictionSearchPerformed).toBe(true);
+      expect(receipt.checks.contradictionEvidenceFetched).toBe(true);
       expect(receipt.protocolStatus).toBe("complete");
     });
 

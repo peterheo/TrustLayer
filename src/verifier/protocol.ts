@@ -27,12 +27,14 @@ export type Phase = (typeof PHASES)[number];
 interface PhaseActivity {
   searchCalls: number;
   searchSucceeded: number;
+  /** Results those searches returned, read from the tool's own output. */
+  searchResults: number;
   fetchCalls: number;
   fetchSucceeded: number;
 }
 
 function emptyActivity(): PhaseActivity {
-  return { searchCalls: 0, searchSucceeded: 0, fetchCalls: 0, fetchSucceeded: 0 };
+  return { searchCalls: 0, searchSucceeded: 0, searchResults: 0, fetchCalls: 0, fetchSucceeded: 0 };
 }
 
 export class ProtocolState {
@@ -72,12 +74,21 @@ export class ProtocolState {
     return this.#failures;
   }
 
-  /** Record one observed tool result, attributed to the phase it happened in. */
-  recordToolResult(tool: string, succeeded: boolean): void {
+  /**
+   * Record one observed tool result, attributed to the phase it happened in.
+   *
+   * `resultCount` comes from the search tool's own output, not from the model:
+   * it is what lets the receipt distinguish "looked and found nothing" from
+   * "found leads and never followed them".
+   */
+  recordToolResult(tool: string, succeeded: boolean, resultCount = 0): void {
     const activity = this.#activity.get(this.#phase) ?? emptyActivity();
     if (tool.endsWith(".search")) {
       activity.searchCalls += 1;
-      if (succeeded) activity.searchSucceeded += 1;
+      if (succeeded) {
+        activity.searchSucceeded += 1;
+        activity.searchResults += resultCount;
+      }
     } else if (tool.endsWith(".fetch")) {
       activity.fetchCalls += 1;
       if (succeeded) activity.fetchSucceeded += 1;
@@ -119,6 +130,35 @@ export class ProtocolState {
    */
   get contradictionSearchPerformed(): boolean {
     return this.entered("challenge") && this.activityIn("challenge").searchSucceeded > 0;
+  }
+
+  /** The challenge search returned at least one lead to follow. */
+  get challengeSearchProducedCandidates(): boolean {
+    return this.activityIn("challenge").searchResults > 0;
+  }
+
+  /**
+   * Something the challenge search turned up was actually retrieved.
+   *
+   * Searching for refutation and never opening what came back is not a
+   * contradiction check; it is a contradiction search. The receipt reports the
+   * two separately because only the second is evidence.
+   */
+  get challengeEvidenceFetched(): boolean {
+    return this.activityIn("challenge").fetchSucceeded > 0;
+  }
+
+  /**
+   * Whether the challenge phase actually finished its job.
+   *
+   * Complete either because leads were found and one was retrieved, or because
+   * a successful search genuinely turned up nothing to follow. Anything else —
+   * a failed search, leads left unopened, a budget that ran out first — is an
+   * incomplete challenge and shows up as a partial protocol.
+   */
+  get challengeComplete(): boolean {
+    if (!this.contradictionSearchPerformed) return false;
+    return this.challengeSearchProducedCandidates ? this.challengeEvidenceFetched : true;
   }
 
   get independentSearchPerformed(): boolean {

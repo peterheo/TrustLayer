@@ -146,6 +146,7 @@ export class EvidenceLedger {
       sourceToolCallId: input.sourceToolCallId,
       ...(candidateId === undefined ? {} : { searchCandidateId: candidateId }),
       origin,
+      phase: this.#phase,
       instructionLikeContent: input.instructionLikeContent,
     };
     this.#evidence.set(record.evidenceId, record);
@@ -179,6 +180,11 @@ export class EvidenceLedger {
 
   get candidateCount(): number {
     return this.#candidates.size;
+  }
+
+  /** Evidence retrieved during one protocol phase. */
+  evidenceFromPhase(phase: string): readonly EvidenceRecord[] {
+    return this.listEvidence().filter((record) => record.phase === phase);
   }
 
   /** Evidence this execution found for itself, rather than being handed. */

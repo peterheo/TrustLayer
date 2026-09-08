@@ -59,9 +59,10 @@ export function deriveOverallStatus(claims: readonly ReceiptClaim[]): OverallSta
  * Whether the protocol actually ran.
  *
  * `complete` requires that the plan was made, an independent search ran, at
- * least one source was retrieved, the challenge phase ran a real search, and
- * adjudication and validation both finished. Anything less is `partial`, and
- * a receipt with no usable adjudication is `failed`. An incomplete run is
+ * least one source was retrieved, the challenge phase ran a real search *and
+ * retrieved something it turned up* (or honestly found nothing to retrieve),
+ * and adjudication and validation both finished. Anything less is `partial`,
+ * and a receipt with no usable adjudication is `failed`. An incomplete run is
  * never dressed up as a confident verdict.
  */
 export function deriveProtocolStatus(
@@ -71,12 +72,20 @@ export function deriveProtocolStatus(
 ): ProtocolStatus {
   if (!adjudicated) return "failed";
 
+  // A challenge that found leads and never opened one is not a completed
+  // challenge, so `complete` needs the retrieval too — unless the search
+  // honestly turned up nothing to retrieve.
+  const challengeComplete = checks.contradictionSearchProducedCandidates
+    ? checks.contradictionEvidenceFetched
+    : checks.contradictionSearchPerformed;
+
   const required =
     protocol.completed("plan") &&
     protocol.completed("adjudicate") &&
     checks.independentSearchPerformed &&
     checks.sourcesFetched &&
     checks.contradictionSearchPerformed &&
+    challengeComplete &&
     checks.evidenceReferencesValidated;
 
   if (!required) return "partial";
@@ -102,6 +111,12 @@ export function deriveChecks(
     candidateCitationsChecked:
       ledger.candidateCitationCount > 0 && ledger.fetchedCandidateCitations().length > 0,
     contradictionSearchPerformed: protocol.contradictionSearchPerformed,
+    contradictionSearchProducedCandidates: protocol.challengeSearchProducedCandidates,
+    // Cross-checked against the ledger: the phase stamped on a record is
+    // written when the fetch happens, so this cannot be true unless a page was
+    // really retrieved while the challenge phase was current.
+    contradictionEvidenceFetched:
+      protocol.challengeEvidenceFetched && ledger.evidenceFromPhase("challenge").length > 0,
     evidenceReferencesValidated: validation.completed,
   };
 }

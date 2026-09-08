@@ -80,7 +80,9 @@ describe("verify() — evidence receipt", () => {
 
     const receipt = await verify(request, { host: host(), model });
 
-    expect(receipt.evidence).toHaveLength(1);
+    // Two retrievals: the research fetch, and the one the challenge phase
+    // turned up and opened.
+    expect(receipt.evidence).toHaveLength(2);
     const evidence = receipt.evidence[0]!;
     expect(evidence.evidenceId).toBe("e1");
     expect(evidence.resolvedUrl).toBe("https://example.org/widget-x-pricing");
@@ -115,8 +117,8 @@ describe("verify() — evidence receipt", () => {
     expect(receipt.coverage.claimsChecked).toBe(1);
     expect(receipt.coverage.criticalClaimsTotal).toBe(1);
     expect(receipt.coverage.criticalClaimsChecked).toBe(1);
-    expect(receipt.coverage.sourcesFetched).toBe(1);
-    expect(receipt.coverage.distinctDomains).toBe(1);
+    expect(receipt.coverage.sourcesFetched).toBe(2);
+    expect(receipt.coverage.distinctDomains).toBe(2);
     // Discovery found more than retrieval used, which is the normal shape.
     expect(receipt.coverage.searchCandidates).toBeGreaterThanOrEqual(1);
   });

@@ -140,6 +140,13 @@ export interface EvidenceRecord {
   /** The search candidate this fetch came from, when it came from one. */
   readonly searchCandidateId?: string;
   readonly origin: EvidenceOrigin;
+  /**
+   * The protocol phase this retrieval happened in, written by the host.
+   *
+   * What makes "a contradiction was actually investigated" checkable after the
+   * fact rather than a claim about intent.
+   */
+  readonly phase: string;
   /** Set when the quarantine layer saw instruction-shaped content in the page. */
   readonly instructionLikeContent: boolean;
 }
@@ -247,6 +254,10 @@ export interface ReceiptChecks {
   readonly sourcesFetched: boolean;
   readonly candidateCitationsChecked: boolean;
   readonly contradictionSearchPerformed: boolean;
+  /** The challenge search returned leads, as opposed to finding nothing. */
+  readonly contradictionSearchProducedCandidates: boolean;
+  /** One of those leads was actually retrieved and read. */
+  readonly contradictionEvidenceFetched: boolean;
   readonly evidenceReferencesValidated: boolean;
 }
 

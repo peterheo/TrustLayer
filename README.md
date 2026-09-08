@@ -76,7 +76,7 @@ PLAN -> DISCOVER -> FETCH -> CHALLENGE -> ADJUDICATE -> VALIDATE -> RECEIPT
 | PLAN | up to 3 claims selected, or taken verbatim from `focusClaims` | host assigns IDs; model proposes text |
 | DISCOVER | `research.search` returns **candidates**, never evidence | model chooses queries |
 | FETCH | `research.fetch` retrieves a page and mints an `EvidenceRecord` | trusted tool code |
-| CHALLENGE | a second search aimed at refuting the claim, not confirming it | model, observed by the host |
+| CHALLENGE | a search aimed at refuting the claim, and a retrieval of what it turns up | model, observed by the host |
 | ADJUDICATE | one status per claim, citing evidence IDs | model |
 | VALIDATE | every citation looked up in the ledger | host |
 | RECEIPT | assembled from validated state and the execution record | host |
@@ -162,9 +162,13 @@ Everything the receipt presents as fact is produced elsewhere:
   the model quietly dropped shows up as a coverage gap instead of vanishing.
 - **Protocol completion is observed, not asserted.**
   `contradictionSearchPerformed` is true only when a search tool call really
-  succeeded while the challenge phase was current. A test scripts a model whose
-  summary claims an exhaustive contradiction search after skipping it; the
-  receipt still reports `false`.
+  succeeded while the challenge phase was current, and
+  `contradictionEvidenceFetched` only when a page was actually retrieved while
+  it was — searching for a refutation and never opening what came back is a
+  search, not a check. A challenge counts as finished when a lead was retrieved,
+  or when the search honestly turned up nothing to retrieve; anything else is a
+  `partial` protocol. A test scripts a model whose summary claims it read three
+  contradicting sources after opening none; the receipt still reports `false`.
 - **Provenance** is read off the SharedOS `ExecutionResult` and its event
   stream, and the service inspects `result.status` rather than assuming an
   absent exception means success.
@@ -199,6 +203,8 @@ Everything the receipt presents as fact is produced elsewhere:
                 "sourcesFetched": 1, "distinctDomains": 1 },
   "checks":   { "independentSearchPerformed": true, "sourcesFetched": true,
                 "candidateCitationsChecked": true, "contradictionSearchPerformed": true,
+                "contradictionSearchProducedCandidates": true,
+                "contradictionEvidenceFetched": true,
                 "evidenceReferencesValidated": true },
   "security": { "suspiciousInstructionsDetected": false, "indicators": [] },
   "provenance": { "purpose": "trust.verify", "executionId": "…", "traceId": "…",
@@ -275,7 +281,7 @@ body runs.
 ## Tests
 
 ```
-pnpm test        # 201 tests
+pnpm test        # 211 tests
 pnpm typecheck
 ```
 
@@ -286,7 +292,7 @@ pnpm typecheck
 | `evidence-ledger.test.ts` | candidates are not evidence, host-minted provenance, candidate-citation origin, per-execution isolation |
 | `receipt-validator.test.ts` | fabricated IDs discarded, downgrades, wrong-relation citations, unadjudicated claims |
 | `citation-validation.test.ts` | caller-supplied sources labelled and chased by the host, dead citations, the fetch cap, `candidateCitationsChecked` |
-| `protocol.test.ts` | phase accounting, `protocolStatus`, `overallStatus`, checks that a model's summary cannot influence |
+| `protocol.test.ts` | phase accounting, challenge search vs challenge retrieval, `protocolStatus`, `overallStatus`, checks a model's summary cannot influence |
 | `permissions.test.ts` | the three gates; forbidden tools refused; missing execution grant; wrong purpose; exact fetch authorization |
 | `research-tools.test.ts` | search-vs-fetch boundary, redirect revalidation, sanitization, dead URLs, headers |
 | `url-policy.test.ts` | SSRF: schemes, credentials, every private range, metadata, IPv4-in-IPv6, DNS rebinding |

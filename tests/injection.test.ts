@@ -187,6 +187,7 @@ describe("prompt injection in candidate output", () => {
       fetchStep("https://example.org/widget-x-pricing", "call-2"),
       RESEARCH_DONE,
       searchStep("Widget X price change", "call-3"),
+      fetchStep("https://example.com/widget-price-change", "call-4"),
       CHALLENGE_DONE,
       adjudicateStep(
         adjudication({
@@ -205,9 +206,10 @@ describe("prompt injection in candidate output", () => {
 
     expect(receipt.security.suspiciousInstructionsDetected).toBe(true);
     expect(receipt.security.indicators.length).toBeGreaterThan(0);
-    // The question the caller actually asked is still answered, with evidence.
+    // The question the caller actually asked is still answered, with evidence,
+    // and the protocol ran in full despite the injection.
     expect(receipt.claims[0]?.status).toBe("supported");
-    expect(receipt.evidence).toHaveLength(1);
+    expect(receipt.evidence).toHaveLength(2);
     expect(receipt.protocolStatus).toBe("complete");
   });
 });
