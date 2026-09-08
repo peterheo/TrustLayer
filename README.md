@@ -289,7 +289,7 @@ body runs.
 ## Tests
 
 ```
-pnpm test        # 271 tests
+pnpm test        # 276 tests
 pnpm typecheck
 ```
 

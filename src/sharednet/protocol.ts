@@ -42,6 +42,17 @@ export type ParseResult =
 
 const ADDRESSED = /@?trustlayer\b|\btrust\.(verify|check)\b/i;
 
+/**
+ * The marker every reply carries, and the reason it exists.
+ *
+ * Our own replies name the service and contain a JSON example, so they read as
+ * calls. Left unguarded, one echo — our own message coming back, a second
+ * instance of the service, another agent quoting a receipt — is a feedback
+ * loop that fills a room and, in a market round, spends other agents' credits.
+ * Any message carrying this marker is not a call, whoever sent it.
+ */
+export const REPLY_MARKER = "[trustlayer-reply · not a call]";
+
 /** ```json … ``` first, then a bare object, so prose around it is fine. */
 function extractJsonObject(text: string): Record<string, unknown> | undefined {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
@@ -71,6 +82,8 @@ function extractJsonObject(text: string): Record<string, unknown> | undefined {
  * whether it was addressed to us at all.
  */
 export function parseCall(content: string): ParseResult {
+  // A reply is never a call, even one that came back to us by another route.
+  if (content.includes(REPLY_MARKER)) return { kind: "ignore" };
   if (!ADDRESSED.test(content)) return { kind: "ignore" };
 
   const service = /\btrust\.check\b/i.test(content)
@@ -137,6 +150,8 @@ export function usageReply(failure: ParseFailure): string {
     "You get back an evidence receipt: every claim checked, every source actually",
     "retrieved with its timestamp and content digest, and the SharedOS execution",
     "that produced them. Absence of evidence comes back as unverified, never as false.",
+    "",
+    REPLY_MARKER,
   ].join("\n");
 }
 
@@ -145,6 +160,7 @@ const CHECK_LABELS: Record<string, string> = {
   sourcesFetched: "sources fetched",
   candidateCitationsChecked: "your citations checked",
   contradictionSearchPerformed: "contradiction search",
+  contradictionSearchProducedCandidates: "contradiction leads found",
   contradictionEvidenceFetched: "contradiction evidence read",
   evidenceReferencesValidated: "citations validated",
 };
@@ -276,6 +292,8 @@ export function renderReceipt(receipt: EvidenceReceipt, options: RenderOptions):
       ...(parts.json
         ? ["", "```json", JSON.stringify(compactReceipt(receipt)), "```"]
         : []),
+      "",
+      REPLY_MARKER,
     ].join("\n");
 
   for (const parts of [
@@ -308,11 +326,24 @@ export function renderFailure(
     "",
     "No receipt means no verification: nothing here should be read as evidence",
     "for or against the claim. Nothing is charged for a call that produced no receipt.",
+    "",
+    REPLY_MARKER,
   ].join("\n");
 }
 
-/** A message we posted ourselves, which must never trigger another reply. */
+/**
+ * A message we posted ourselves, which must never trigger another reply.
+ *
+ * The live service puts the sender under `sender.member_id` and
+ * `sender_instance_id`; the docs page shows a top-level `member_id`. All three
+ * are checked, because getting this wrong is not a cosmetic bug — it is a
+ * service that answers itself forever.
+ */
 export function isOwnMessage(message: SharedNetMessage, memberId?: string): boolean {
   if (memberId === undefined) return false;
-  return message.member_id === memberId;
+  return (
+    message.sender_instance_id === memberId ||
+    message.sender?.member_id === memberId ||
+    message.member_id === memberId
+  );
 }

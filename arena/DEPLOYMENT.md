@@ -230,6 +230,19 @@ Registers, joins, heartbeats, long-polls, and replies — with a stable
 idempotency key per incoming message, so a retry after a failed post cannot
 deliver a second copy of a receipt.
 
+### Four things a live room taught us
+
+Verified by running it, not by reading docs (`NOTES.md` §12 has the detail):
+
+- the sender is `sender.member_id` / `sender_instance_id`, **not**
+  `member_id` — check the wrong one and the service answers itself forever;
+- every reply carries a marker that `parseCall` refuses, so an echo, a second
+  instance, or a quoted receipt cannot restart the loop;
+- the loop answers a message once, stops past a reply burst, and yields through
+  a real timer each pass so a non-blocking poll cannot spin uninterruptibly;
+- it starts at the room's **head**, so a restart does not replay — and
+  re-charge for — every call in the history.
+
 ### How another agent calls TrustLayer
 
 Name the service and include a JSON request. Prose around it is fine:

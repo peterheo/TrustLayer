@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SharedNetClient, MAX_MESSAGE_BYTES, localInstanceKey } from "../src/sharednet/client.js";
 import {
+  REPLY_MARKER,
   compactReceipt,
+  isOwnMessage,
   parseCall,
   renderFailure,
   renderReceipt,
@@ -44,6 +46,32 @@ describe("sharednet call protocol", () => {
     it("routes trust.check to the cheaper service", () => {
       const result = parseCall(`trust.check ${JSON.stringify(request)}`);
       expect(result.kind === "call" && result.call.service).toBe("trust.check");
+    });
+
+    /**
+     * The failure that actually happened, live: the service answered its own
+     * replies and filled a room. Our replies name the service and contain a
+     * JSON example, so they parse as calls unless something stops them.
+     */
+    it("never reads one of our own replies as a call", () => {
+      const receipt = usageReply({ service: "trust.verify", reason: "test" });
+      expect(receipt).toContain(REPLY_MARKER);
+      expect(parseCall(receipt).kind).toBe("ignore");
+
+      const failure = renderFailure("trust.verify", "MODEL_FAILURE", "…");
+      expect(parseCall(failure).kind).toBe("ignore");
+
+      // Even quoted back by somebody else, a reply is not a call.
+      expect(parseCall(`hey @trustlayer look at this:\n${failure}`).kind).toBe("ignore");
+    });
+
+    it("recognises our own message however the service spells the sender", () => {
+      // The live API sends sender.member_id and sender_instance_id; the docs
+      // page shows a top-level member_id. Missing this is a self-answer loop.
+      expect(isOwnMessage({ id: "m", sequence: 1, content: "x", sender_instance_id: "i_us" }, "i_us")).toBe(true);
+      expect(isOwnMessage({ id: "m", sequence: 1, content: "x", sender: { member_id: "i_us" } }, "i_us")).toBe(true);
+      expect(isOwnMessage({ id: "m", sequence: 1, content: "x", member_id: "i_us" }, "i_us")).toBe(true);
+      expect(isOwnMessage({ id: "m", sequence: 1, content: "x", sender_instance_id: "i_them" }, "i_us")).toBe(false);
     });
 
     it("stays silent in a busy room when nobody addressed us", () => {
@@ -484,6 +512,7 @@ describe("sharednet room service", () => {
         memberId: "mem_us",
         signal: controller.signal,
         waitSeconds: 0,
+        idleDelayMs: 1,
         verifyOptions: {
           host: createTrustLayerHost({ searchBackend: staticBackend(), resolveHost: publicDns }),
           model: new ScriptedVerifierModel(fullProtocolScript()),
@@ -526,6 +555,163 @@ describe("stdout is the reply channel", () => {
 });
 
 /** The engine behind the room reply is the same one the HTTP surface uses. */
+describe("sharednet room service guards", () => {
+  /** The live incident in miniature: a room that echoes whatever is posted. */
+  function echoRoom(options: { readonly ownMemberId?: string } = {}) {
+    let sequence = 0;
+    const posted: string[] = [];
+    const pending: { id: string; sequence: number; content: string; sender_instance_id: string }[] = [
+      {
+        id: "msg_call",
+        sequence: 1,
+        content: '@trustlayer ```json{"task":"t","candidate_output":"c"}```',
+        sender_instance_id: "i_caller",
+      },
+    ];
+
+    const fetchImpl = (async (url: unknown, init: RequestInit = {}) => {
+      const target = String(url);
+      if (target.includes("/heartbeat")) return new Response("{}", { status: 200 });
+      if (target.includes("/wait")) {
+        const items = pending.splice(0, pending.length);
+        return new Response(JSON.stringify({ items }), { status: 200 });
+      }
+      if (target.includes("/messages")) {
+        const content = JSON.parse(String(init.body)).content as string;
+        posted.push(content);
+        sequence += 1;
+        // The room hands our own reply straight back to us.
+        pending.push({
+          id: `msg_echo_${sequence}`,
+          sequence: sequence + 1,
+          content,
+          sender_instance_id: options.ownMemberId ?? "i_someone_else",
+        });
+        return new Response(JSON.stringify({ message: { id: `msg_${sequence}` } }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+
+    return { posted, fetchImpl };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("starts at the room's head, so a restart does not re-answer history", async () => {
+    // The live incident's quieter cousin: a restart replayed the backlog and
+    // answered a call from an earlier run. In a market round that is a second
+    // delivery of a receipt nobody asked for again.
+    const requested: string[] = [];
+    const history = Array.from({ length: 3 }, (_, index) => ({
+      id: `msg_old_${index}`,
+      sequence: index + 1,
+      content: '@trustlayer ```json{"task":"t","candidate_output":"c"}```',
+      sender_instance_id: "i_caller",
+    }));
+
+    const fetchImpl = (async (url: unknown) => {
+      const target = String(url);
+      requested.push(target);
+      if (target.includes("/heartbeat")) return new Response("{}", { status: 200 });
+      if (target.includes("/messages?")) {
+        const after = Number(new URL(target).searchParams.get("after"));
+        return new Response(
+          JSON.stringify({ items: history.filter((m) => m.sequence > after) }),
+          { status: 200 },
+        );
+      }
+      if (target.includes("/wait")) return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 200).unref();
+
+    await runRoomService({
+      client: new SharedNetClient({ instanceToken: "sni_t", fetch: fetchImpl }),
+      roomId: "rom_1",
+      memberId: "i_us",
+      signal: controller.signal,
+      waitSeconds: 0,
+      idleDelayMs: 1,
+    });
+
+    // It polls from the end of the backlog, not from zero.
+    const waits = requested.filter((target) => target.includes("/wait"));
+    expect(waits.length).toBeGreaterThan(0);
+    for (const wait of waits) expect(wait).toContain("after=3");
+    // And nothing from the backlog was answered.
+    expect(requested.some((target) => target.endsWith("/messages"))).toBe(false);
+  });
+
+  it("does not answer an echo of its own reply", async () => {
+    // Echoed back under someone else's id, so self-detection cannot save us —
+    // the marker has to.
+    const { posted, fetchImpl } = echoRoom();
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 300).unref();
+
+    await runRoomService({
+      client: new SharedNetClient({ instanceToken: "sni_t", fetch: fetchImpl }),
+      roomId: "rom_1",
+      memberId: "i_us",
+      signal: controller.signal,
+      waitSeconds: 0,
+      idleDelayMs: 1,
+      maxRepliesPerWindow: 50,
+    });
+
+    // One call in, one reply out, and the echo answered nothing.
+    expect(posted).toHaveLength(1);
+  });
+
+  it("stops rather than flooding a room if replies ever run away", async () => {
+    // A room that turns every reply into a fresh, valid call.
+    let sequence = 0;
+    const posted: string[] = [];
+    const call = '@trustlayer ```json{"task":"t","candidate_output":"c"}```';
+    const fetchImpl = (async (url: unknown, init: RequestInit = {}) => {
+      const target = String(url);
+      if (target.includes("/heartbeat")) return new Response("{}", { status: 200 });
+      if (target.includes("/wait")) {
+        sequence += 1;
+        return new Response(
+          JSON.stringify({
+            items: [
+              { id: `msg_${sequence}`, sequence, content: call, sender_instance_id: "i_caller" },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (target.includes("/messages")) {
+        posted.push(JSON.parse(String(init.body)).content as string);
+        return new Response(JSON.stringify({ message: { id: "m" } }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 3_000).unref();
+
+    await runRoomService({
+      client: new SharedNetClient({ instanceToken: "sni_t", fetch: fetchImpl }),
+      roomId: "rom_1",
+      memberId: "i_us",
+      signal: controller.signal,
+      waitSeconds: 0,
+      idleDelayMs: 1,
+      maxRepliesPerWindow: 3,
+      replyWindowMs: 60_000,
+    });
+
+    // It stops at the limit instead of posting until someone notices.
+    expect(posted).toHaveLength(3);
+  });
+});
+
 describe("one engine", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

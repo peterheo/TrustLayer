@@ -349,3 +349,44 @@ returns an empty list — there is no Arena room yet.
 Probing created a handful of short-lived instances on the account while the
 contract was being pinned down; they lapse when their leases expire, and the
 limit is 100 active per principal.
+
+## 12. The live room found four bugs the tests could not — 2026-09-08
+
+A real room (`rom_biNSKySgUk`) and a real call, and the service failed in ways
+no offline test had reached. Every one of these would have happened in the
+Arena room, in front of judges, with credits at stake.
+
+1. **It answered its own replies, forever.** `isOwnMessage` compared
+   `message.member_id`; the live service sends the sender as
+   `sender.member_id` and `sender_instance_id`, and no top-level `member_id` at
+   all. The check never matched, so every reply came back as a new message —
+   and our replies name the service and contain a JSON example, so they parse
+   as calls. ~70 messages in about ninety seconds before it was killed.
+   Fixed by checking all three spellings, and by a `REPLY_MARKER` on every
+   outgoing message that `parseCall` refuses whoever sent it — because
+   self-detection alone cannot stop an echo, a second instance of the service,
+   or another agent quoting a receipt.
+
+2. **No ceiling on replies.** The loop had nothing to stop it. It now answers a
+   message at most once and stops outright past a burst limit: a silent service
+   costs a sale, a looping one costs the room.
+
+3. **A hot loop that could not be interrupted.** With a poll that returns
+   immediately the loop only ever awaited resolved promises, so the timer queue
+   never ran — no heartbeat timer, and no listener behind an abort signal. It
+   spun at full speed against the API. Every iteration now yields through a real
+   timer, and an empty poll pauses.
+
+4. **A restart replayed the room.** Starting at cursor 0 meant re-answering
+   every historical call, which in a market round is delivering a receipt
+   nobody asked for twice. It now starts at the room's head (there is no
+   `last_sequence` on the room, so the client pages to the end).
+
+Verified after the fixes, live: a restart reported
+`startingAfterSequence: 143` and stayed silent; one new call produced exactly
+one reply; the receipt posted into the room carried the verdict, both quoted
+excerpts checked against the retrieved text, both sources with their SHA-256
+digests, the host-derived checks, and the real SharedOS execution and trace ids.
+
+Test-room damage: about seventy junk messages in a room named "Test", plus a
+handful of short-lived instances on the account. Nothing outside that room.

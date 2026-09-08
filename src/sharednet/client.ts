@@ -55,12 +55,22 @@ export const MAX_MESSAGE_BYTES = 32_768;
 /** Long-poll ceiling, from the same limits. */
 export const MAX_WAIT_SECONDS = 25;
 
+/**
+ * A room message as the service really returns it.
+ *
+ * The sender is under `sender.member_id` and `sender_instance_id` — there is no
+ * top-level `member_id`, which is exactly the kind of detail that reads as
+ * cosmetic and is not: a self-check against the wrong field means a service
+ * answers its own replies.
+ */
 export interface SharedNetMessage {
   readonly id: string;
   readonly sequence: number;
   readonly content: string;
+  readonly sender_instance_id?: string;
+  readonly sender?: { readonly member_id?: string; readonly kind?: string; readonly name?: string | null };
+  /** Not sent by the live service; accepted so a docs-shaped payload still works. */
   readonly member_id?: string;
-  readonly instance_id?: string;
   readonly created_at?: string;
   readonly reply_to_message_id?: string;
 }
@@ -248,10 +258,31 @@ export class SharedNetClient {
     await this.#request("POST", "/instances/current/heartbeat", this.#token(), {});
   }
 
-  async joinRoom(roomId: string): Promise<unknown> {
-    return this.#request("POST", `/rooms/${encodeURIComponent(roomId)}/join`, this.#token(), undefined, {
-      "idempotency-key": randomUUID(),
-    });
+  /**
+   * Join a room, optionally presenting an invite.
+   *
+   * A room the seat was added to needs no invite; one reached through an
+   * invite link carries the `rit_…` token in the body, which is how the
+   * official CLI joins and how an Arena room is likely to be handed out.
+   */
+  async joinRoom(roomId: string, options: { readonly invite?: string } = {}): Promise<unknown> {
+    return this.#request(
+      "POST",
+      `/rooms/${encodeURIComponent(roomId)}/join`,
+      this.#token(),
+      options.invite === undefined ? undefined : { invite: options.invite },
+      { "idempotency-key": randomUUID() },
+    );
+  }
+
+  /** Read a page of a room's history, oldest first after `after`. */
+  async listMessages(roomId: string, after = 0, limit = 50): Promise<MessagePage> {
+    const page = await this.#request<MessagePage>(
+      "GET",
+      `/rooms/${encodeURIComponent(roomId)}/messages?after=${after}&limit=${limit}`,
+      this.#token(),
+    );
+    return { items: page.items ?? [] };
   }
 
   /** Who this token says we are, and the lease it currently holds. */
@@ -261,6 +292,24 @@ export class SharedNetClient {
 
   async listRooms(): Promise<unknown> {
     return this.#request("GET", "/rooms", this.#token());
+  }
+
+  /**
+   * The room's current last sequence.
+   *
+   * There is no field for it on the room itself, so this pages to the end.
+   * Worth the calls at startup: it is what lets a restarting service pick up
+   * where the room is now instead of replaying — and re-answering — history.
+   */
+  async headSequence(roomId: string): Promise<number> {
+    let cursor = 0;
+    for (let page = 0; page < 50; page += 1) {
+      const { items } = await this.listMessages(roomId, cursor, 100);
+      if (items.length === 0) return cursor;
+      cursor = items[items.length - 1]?.sequence ?? cursor;
+      if (items.length < 100) return cursor;
+    }
+    return cursor;
   }
 
   /**
