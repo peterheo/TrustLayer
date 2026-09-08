@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
@@ -11,6 +13,7 @@ import {
   webAgentLimits,
   type WebAgentStep,
 } from "../evals/baseline-web-agent.js";
+import { buildReport, renderMarkdown, writeReport } from "../evals/report.js";
 import { MeteredVerifierModel } from "../evals/metering.js";
 import {
   costRatesFromEnv,
@@ -553,5 +556,120 @@ describe("web-agent baseline", () => {
     });
     expect(overridden.maxToolCalls).toBe(12);
     expect(overridden.maxModelCalls).toBe(20);
+  });
+});
+
+/**
+ * Preserving a run.
+ *
+ * A benchmark nobody can reproduce is a marketing claim, so the artifact has
+ * to carry the conditions — commit, model, budgets, pricing — alongside the
+ * numbers, and a harness selftest must never be able to pass for a result.
+ */
+describe("benchmark report", () => {
+  const outcome = (caseId: string, actual: "supported" | "contradicted") =>
+    scoreCase({
+      testCase: caseById(caseId)!,
+      actual,
+      citedUrls: [],
+      world: buildWorld(caseById(caseId)!),
+      latencyMs: 100,
+      toolCalls: 3,
+      sourcesFetched: 1,
+      usage: { calls: 6, inputTokens: 10_000, outputTokens: 2_000 },
+    });
+
+  const rates = { inputUsdPerMillionTokens: 3, outputUsdPerMillionTokens: 15 };
+
+  function report(selftest = false) {
+    const outcomes = {
+      trustlayer: [outcome("correct-price", "supported"), outcome("stale-price", "contradicted")],
+      "baseline(web-agent)": [
+        outcome("correct-price", "supported"),
+        outcome("stale-price", "supported"),
+      ],
+    };
+    return buildReport(
+      {
+        selftest,
+        provider: "anthropic",
+        model: "a-model",
+        searchProvider: "none",
+        cases: 2,
+        repetitions: 1,
+        webAgentBudget: { maxToolCalls: 7, maxModelCalls: 8 },
+        rates,
+      },
+      [
+        summarise("trustlayer", outcomes.trustlayer, rates),
+        summarise("baseline(web-agent)", outcomes["baseline(web-agent)"], rates),
+      ],
+      outcomes,
+    );
+  }
+
+  it("records the conditions a reader needs to reproduce or dispute it", () => {
+    const markdown = renderMarkdown(report());
+
+    expect(markdown).toContain("method version: `trustlayer-evidence-v1`");
+    expect(markdown).toContain("`anthropic` / `a-model`");
+    expect(markdown).toContain("web-agent baseline budget: 7 tool calls");
+    expect(markdown).toContain("$3/Mtok input");
+    // One run per case is a data point, and says so.
+    expect(markdown).toMatch(/Single-run benchmark/);
+    expect(markdown).toContain("commit:");
+  });
+
+  it("puts every system and every case in the tables", () => {
+    const markdown = renderMarkdown(report());
+
+    expect(markdown).toContain("| trustlayer | baseline(web-agent) |");
+    expect(markdown).toContain("correct-price");
+    expect(markdown).toContain("stale-price");
+    expect(markdown).toContain("cost per error caught");
+  });
+
+  it("stamps a selftest so it can never be quoted as a result", () => {
+    const markdown = renderMarkdown(report(true));
+    expect(markdown).toContain("THIS IS NOT A BENCHMARK RESULT");
+  });
+
+  it("writes both artifacts, named by timestamp and commit", () => {
+    const directory = mkdtempSync(join(tmpdir(), "trustlayer-report-"));
+    try {
+      const written = writeReport(report(), directory);
+
+      expect(written.jsonPath.endsWith(".json")).toBe(true);
+      expect(written.markdownPath.endsWith(".md")).toBe(true);
+
+      const parsed = JSON.parse(readFileSync(written.jsonPath, "utf8")) as {
+        commit: string;
+        systems: readonly { system: string }[];
+        outcomes: Record<string, readonly unknown[]>;
+      };
+      expect(parsed.systems.map((system) => system.system)).toEqual([
+        "trustlayer",
+        "baseline(web-agent)",
+      ]);
+      // Raw per-case outcomes are kept, not just the summary.
+      expect(parsed.outcomes["trustlayer"]).toHaveLength(2);
+      expect(readFileSync(written.markdownPath, "utf8")).toContain("## Results");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("prices a catch only when both a price and a catch exist", () => {
+    const priced = summarise("system", [outcome("stale-price", "contradicted")], rates);
+    expect(priced.materialErrorsCaught).toBe(1);
+    expect(priced.costPerMaterialErrorCaughtUsd).toBeCloseTo(priced.estimatedCostUsd ?? 0, 4);
+
+    // Caught nothing: there is no cost per catch to report.
+    const nothingCaught = summarise("system", [outcome("stale-price", "supported")], rates);
+    expect(nothingCaught.costPerMaterialErrorCaughtUsd).toBeNull();
+
+    // No rates: no money anywhere.
+    const unpriced = summarise("system", [outcome("stale-price", "contradicted")]);
+    expect(unpriced.costPerMaterialErrorCaughtUsd).toBeNull();
   });
 });

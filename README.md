@@ -281,7 +281,7 @@ body runs.
 ## Tests
 
 ```
-pnpm test        # 221 tests
+pnpm test        # 226 tests
 pnpm typecheck
 ```
 
@@ -331,10 +331,18 @@ than TrustLayer's one-claim protocol uses, overridable with
 and actual usage is measured and printed rather than assumed equal.
 
 ```bash
-pnpm eval             # every case against TrustLayer and both baselines
-pnpm eval --selftest  # exercise the harness with stub models — NOT a benchmark
+pnpm eval                   # every case, all four systems
+pnpm eval --repeat 3        # three runs per case per system
+pnpm eval --write-results   # preserve the run under evals/results/
+pnpm eval --selftest        # exercise the harness with stub models — NOT a benchmark
 pnpm eval --case stale-price
 ```
+
+`--write-results` writes `evals/results/<timestamp>-<commit>.json` and `.md`,
+carrying the commit, model, method version, budgets, pricing assumptions, every
+system's metrics and every per-case outcome — so a quoted number can be traced
+to the run that produced it. A selftest artifact is stamped **THIS IS NOT A
+BENCHMARK RESULT** and is not kept in the repository.
 
 Cost is measured, not assumed: tool calls come from the kernel's own audit
 record (not from the count of distinct tool names, which is never more than
@@ -357,9 +365,14 @@ failure modes a model reasoning from memory cannot catch and are where the
 thesis has to show a difference — burying them in overall accuracy would hide
 the only comparison that matters.
 
+Cost per material error caught is reported alongside the detection rates,
+because the claim is value per unit cost rather than raw accuracy — a system
+that answers `unverified` to everything never errs and is useless.
+
 **No benchmark has been run.** `pnpm eval` refuses to start without
 `MODEL_API_KEY` rather than emitting numbers that would look like results, and
-`--selftest` labels its output as not a benchmark.
+`--selftest` labels its output as not a benchmark. Nothing in this README or in
+the Arena copy quotes a measured comparison, because there is not one yet.
 
 ## Running for real
 

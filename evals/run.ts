@@ -1,9 +1,11 @@
 /**
  * The benchmark runner.
  *
- *   pnpm eval             run every case against TrustLayer and both baselines
- *   pnpm eval --selftest  exercise the harness with stub models (NOT a benchmark)
- *   pnpm eval --case <id> run one case
+ *   pnpm eval                  every case against TrustLayer and all three baselines
+ *   pnpm eval --selftest       exercise the harness with stub models (NOT a benchmark)
+ *   pnpm eval --case <id>      run one case
+ *   pnpm eval --repeat 3       repeat each case, to see run-to-run variance
+ *   pnpm eval --write-results  preserve the run under evals/results/
  *
  * Set MODEL_INPUT_USD_PER_MTOK and MODEL_OUTPUT_USD_PER_MTOK to price the
  * comparison; without them cost is reported as n/a rather than guessed.
@@ -43,12 +45,25 @@ import {
   type CaseOutcome,
 } from "./metrics.js";
 import { MeteredVerifierModel } from "./metering.js";
+import { buildReport, writeReport } from "./report.js";
 import { runTrustLayer } from "./trustlayer.js";
 import { buildWorld } from "./world.js";
 import type { VerifierModel } from "../src/verifier/model.js";
 
 const args = process.argv.slice(2);
 const selftest = args.includes("--selftest");
+const writeResults = args.includes("--write-results");
+
+function numberFlag(name: string, fallback: number): number {
+  const index = args.indexOf(name);
+  if (index < 0) return fallback;
+  const parsed = Number.parseInt(args[index + 1] ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** Repetitions per case per system. One run is a data point, not a result. */
+const repetitions = numberFlag("--repeat", 1);
+
 const caseArg = args.indexOf("--case");
 const selected: readonly EvalCase[] =
   caseArg >= 0 && args[caseArg + 1] !== undefined
@@ -179,6 +194,8 @@ async function main(): Promise<void> {
   const meteredVerifier =
     models === undefined ? undefined : new MeteredVerifierModel(models.verifier);
 
+  for (let run = 1; run <= repetitions; run += 1) {
+  if (repetitions > 1) process.stdout.write(`\n--- run ${run} of ${repetitions} ---\n`);
   for (const testCase of selected) {
     const world = buildWorld(testCase);
 
@@ -246,6 +263,7 @@ async function main(): Promise<void> {
         ` trustlayer=${result.status.padEnd(16)} web-agent=${webAgent.verdict.status}\n`,
     );
   }
+  }
 
   const metrics = [
     summarise("trustlayer", trustlayerOutcomes, rates),
@@ -277,6 +295,33 @@ async function main(): Promise<void> {
     );
   }
 
+  if (writeResults) {
+    const report = buildReport(
+      {
+        selftest,
+        provider: selftest ? "scripted" : config.model.provider,
+        model: selftest ? "stub" : config.model.name,
+        searchProvider: config.search.provider,
+        cases: selected.length,
+        repetitions,
+        webAgentBudget: {
+          maxToolCalls: limits.maxToolCalls,
+          maxModelCalls: limits.maxModelCalls,
+        },
+        rates,
+      },
+      metrics,
+      {
+        trustlayer: trustlayerOutcomes,
+        "baseline(web-agent)": webAgentOutcomes,
+        "baseline(+search)": baselineOutcomes.get("with_search")!,
+        "baseline(plain)": baselineOutcomes.get("plain")!,
+      },
+    );
+    const written = writeReport(report);
+    console.log(`Wrote ${written.jsonPath}\n      ${written.markdownPath}\n`);
+  }
+
   if (selftest) {
     console.log(
       [
@@ -292,7 +337,10 @@ async function main(): Promise<void> {
   } else {
     console.log(
       [
-        `Model: ${config.model.name}. Cases: ${selected.length}.`,
+        `Model: ${config.model.name}. Cases: ${selected.length}. Repetitions: ${repetitions}.`,
+        repetitions === 1
+          ? "Single-run benchmark: label it as such wherever these numbers are quoted."
+          : "",
         "Report these numbers as they are. If TrustLayer does not beat the baseline,",
         "that is a finding about the product, not a reason to re-run until it does.",
       ].join("\n"),

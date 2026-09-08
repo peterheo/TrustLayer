@@ -79,6 +79,14 @@ export interface SystemMetrics {
   readonly totalOutputTokens: number;
   /** Null unless token rates were supplied; never guessed. */
   readonly estimatedCostUsd: number | null;
+  /**
+   * What one caught material error cost.
+   *
+   * The comparison the product thesis actually rests on: not who is more
+   * accurate, but what each system charges for the failures it catches. Null
+   * when there is no price or nothing was caught.
+   */
+  readonly costPerMaterialErrorCaughtUsd: number | null;
   readonly errors: number;
 }
 
@@ -191,6 +199,12 @@ export function scoreCase(input: ScoreInput): CaseOutcome {
   };
 }
 
+/** Cost divided by catches, or null when either is missing. */
+function costPerCatch(cost: number | null, caught: number): number | null {
+  if (cost === null || caught === 0) return null;
+  return Number((cost / caught).toFixed(4));
+}
+
 function median(values: readonly number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -274,6 +288,7 @@ export function summarise(
     totalInputTokens: usage.inputTokens,
     totalOutputTokens: usage.outputTokens,
     estimatedCostUsd: estimateCostUsd(usage, rates),
+    costPerMaterialErrorCaughtUsd: costPerCatch(estimateCostUsd(usage, rates), caught.length),
     errors: outcomes.filter((outcome) => outcome.errorCode !== undefined).length,
   };
 }
@@ -322,6 +337,14 @@ export function formatMetrics(all: readonly SystemMetrics[]): string {
     [
       "estimated cost usd",
       ...all.map((m) => (m.estimatedCostUsd === null ? "n/a" : m.estimatedCostUsd.toFixed(4))),
+    ],
+    [
+      "cost per error caught",
+      ...all.map((m) =>
+        m.costPerMaterialErrorCaughtUsd === null
+          ? "n/a"
+          : m.costPerMaterialErrorCaughtUsd.toFixed(4),
+      ),
     ],
     ["errors", ...all.map((m) => String(m.errors))],
   ];

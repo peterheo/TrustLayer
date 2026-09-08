@@ -5,3 +5,7 @@ dist/
 !.env.example
 *.log
 .DS_Store
+
+# Harness selftest artifacts are not benchmark results and are not kept.
+evals/results/*-selftest.json
+evals/results/*-selftest.md
