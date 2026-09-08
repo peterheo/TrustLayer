@@ -281,7 +281,7 @@ body runs.
 ## Tests
 
 ```
-pnpm test        # 211 tests
+pnpm test        # 221 tests
 pnpm typecheck
 ```
 
@@ -298,7 +298,7 @@ pnpm typecheck
 | `url-policy.test.ts` | SSRF: schemes, credentials, every private range, metadata, IPv4-in-IPv6, DNS rebinding |
 | `injection.test.ts` | quarantine behaviour, injection from candidate output and from a fetched page |
 | `arena.test.ts` | both service entry points, payload aliasing, error shape, descriptors advertise no trust score |
-| `evals.test.ts` | the benchmark corpus, world, and metrics — including that degenerate strategies score badly |
+| `evals.test.ts` | the benchmark corpus, world, metrics, and the web-agent baseline's fairness — including that degenerate strategies score badly |
 
 CI runs the typecheck, the suite, both demos and the benchmark selftest on
 every push — all of it offline, so it needs no secrets.
@@ -311,10 +311,24 @@ which a real model cannot be relied on to do on command.
 
 ## Benchmark
 
-The obvious alternative to TrustLayer is "ask another model to double-check the
-answer", so [`evals/`](evals) implements that baseline fairly rather than as a
-straw man: same case, same claim, and a `+search` mode given the identical
-discovery snippets TrustLayer saw.
+The obvious alternative to TrustLayer is not "ask a model from memory" — it is
+"point the same model at the web and have it check the answer itself". So
+[`evals/`](evals) runs four systems:
+
+| System | What it gets |
+| --- | --- |
+| `trustlayer` | the full protocol, ledger, validation, forced challenge |
+| `baseline(web-agent)` | **the primary competitor**: same model, search and fetch over the same closed web, comparable budget, none of the protocol |
+| `baseline(+search)` | one call, handed the same discovery snippets |
+| `baseline(plain)` | one call, from memory |
+
+The web-agent baseline's prompt tells it to check sources rather than answer
+from memory and to look for evidence that would falsify the claim. Handicapping
+it would make the comparison worthless. Its budget defaults to TrustLayer's own
+tool-call ceiling (`TURN_MAX_TOOL_CALLS - 1`) and slightly more model rounds
+than TrustLayer's one-claim protocol uses, overridable with
+`EVAL_WEB_BASELINE_MAX_TOOL_CALLS` and `EVAL_WEB_BASELINE_MAX_MODEL_CALLS` —
+and actual usage is measured and printed rather than assumed equal.
 
 ```bash
 pnpm eval             # every case against TrustLayer and both baselines

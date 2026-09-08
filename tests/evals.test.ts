@@ -1,7 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+import { describe, expect, it, vi } from "vitest";
 
 import { EVAL_CASES, caseById, type EvalCase } from "../evals/cases/index.js";
 import { buildBaselinePrompt } from "../evals/baseline-second-check.js";
+import {
+  ScriptedWebAgentModel,
+  runWebAgentBaseline,
+  webAgentLimits,
+  type WebAgentStep,
+} from "../evals/baseline-web-agent.js";
 import { MeteredVerifierModel } from "../evals/metering.js";
 import {
   costRatesFromEnv,
@@ -371,5 +380,178 @@ describe("eval cost measurement", () => {
 
     expect(result.usage.inputTokens).toBe(0);
     expect(result.usage.outputTokens).toBe(0);
+  });
+});
+
+/**
+ * The competitor that actually matters.
+ *
+ * "Why not point the same model at the web myself?" is the objection the
+ * product has to survive, so the baseline gets the same model, the same closed
+ * web, and a comparable budget — and none of TrustLayer's protocol. These
+ * tests are about the fairness of that setup: if the baseline is quietly
+ * crippled, every number downstream is worthless.
+ */
+describe("web-agent baseline", () => {
+  const testCase = caseById("stale-price")!;
+  const served = testCase.pages.find((page) => page.body !== undefined)!;
+  const signal = () => AbortSignal.timeout(20_000);
+
+  function agent(...script: WebAgentStep[]): ScriptedWebAgentModel {
+    return new ScriptedWebAgentModel(script);
+  }
+
+  const verdict: WebAgentStep = {
+    kind: "verdict",
+    verdict: { status: "contradicted", confidence: 0.8, rationale: "The page says $89.", citedUrls: [served.url] },
+  };
+
+  it("can search, and sees the same corpus TrustLayer sees", async () => {
+    const world = buildWorld(testCase);
+    const model = agent({ kind: "search", query: testCase.focusClaim }, verdict);
+
+    const result = await runWebAgentBaseline(testCase, world, model, signal());
+
+    const searchObservation = model.observations.find((text) => text.startsWith("Search results"));
+    expect(searchObservation).toBeDefined();
+    for (const page of world.snippets) {
+      expect(searchObservation).toContain(page.url);
+    }
+    expect(result.toolCalls).toBe(1);
+  });
+
+  it("can fetch, and reads the page text the world serves", async () => {
+    const world = buildWorld(testCase);
+    const model = agent({ kind: "fetch", url: served.url }, verdict);
+
+    const result = await runWebAgentBaseline(testCase, world, model, signal());
+
+    const page = model.observations.find((text) => text.startsWith(`Contents of ${served.url}`));
+    expect(page).toBeDefined();
+    // Same extraction TrustLayer uses, so neither side gets better text.
+    expect(page).not.toMatch(/<script|<html/i);
+    expect(result.sourcesFetched).toBe(1);
+  });
+
+  it("gets nothing from the evidence ledger", async () => {
+    const world = buildWorld(testCase);
+    const model = agent({ kind: "fetch", url: served.url }, verdict);
+
+    await runWebAgentBaseline(testCase, world, model, signal());
+
+    // No evidence IDs, no digests, no provenance: the baseline has pages and
+    // its own judgement, which is the point of the comparison.
+    for (const observation of model.observations) {
+      expect(observation).not.toMatch(/evidenceId|contentSha256|candidateId/);
+    }
+    const source = readFileSync(
+      fileURLToPath(new URL("../evals/baseline-web-agent.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(source).not.toMatch(/evidence\/ledger|EvidenceLedger|validateAdjudications/);
+  });
+
+  it("sees the same dead URLs TrustLayer does", async () => {
+    const world = buildWorld(testCase);
+    const model = agent({ kind: "fetch", url: "https://invented.example/nope" }, verdict);
+
+    await runWebAgentBaseline(testCase, world, model, signal());
+
+    expect(model.observations.some((text) => text.includes("HTTP 404"))).toBe(true);
+  });
+
+  it("stops at its tool-call budget and is told to answer", async () => {
+    const world = buildWorld(testCase);
+    // A model that would search forever if nothing stopped it.
+    const model = agent();
+
+    const result = await runWebAgentBaseline(testCase, world, model, signal(), {
+      maxToolCalls: 2,
+      maxModelCalls: 6,
+      maxTextLength: 5_000,
+    });
+
+    // The ceiling holds, and it is told rather than silently ignored — a
+    // baseline whose tool calls quietly no-op is a crippled baseline.
+    expect(result.toolCalls).toBe(2);
+    expect(
+      model.observations.some((text) => text.includes("used your entire search and fetch budget")),
+    ).toBe(true);
+    // This one never answers, so it ends on the model-call budget instead.
+    expect(result.stopReason).toBe("model_calls");
+  });
+
+  it("records that a verdict was reached under a truncated tool budget", async () => {
+    const world = buildWorld(testCase);
+    const model = agent({ kind: "search", query: "price" }, { kind: "search", query: "again" }, verdict);
+
+    const result = await runWebAgentBaseline(testCase, world, model, signal(), {
+      maxToolCalls: 1,
+      maxModelCalls: 6,
+      maxTextLength: 5_000,
+    });
+
+    expect(result.verdict.status).toBe("contradicted");
+    expect(result.toolCalls).toBe(1);
+    expect(result.stopReason).toBe("tool_calls");
+  });
+
+  it("gives up as unverified rather than inventing an answer", async () => {
+    const world = buildWorld(testCase);
+    const model = agent();
+
+    const result = await runWebAgentBaseline(testCase, world, model, signal(), {
+      maxToolCalls: 1,
+      maxModelCalls: 3,
+      maxTextLength: 5_000,
+    });
+
+    expect(result.verdict.status).toBe("unverified");
+    expect(result.verdict.citedUrls).toEqual([]);
+    expect(result.modelCalls).toBe(3);
+  });
+
+  it("counts every model round it actually took", async () => {
+    const world = buildWorld(testCase);
+    const model = agent(
+      { kind: "search", query: "price" },
+      { kind: "fetch", url: served.url },
+      verdict,
+    );
+
+    const result = await runWebAgentBaseline(testCase, world, model, signal());
+
+    expect(result.modelCalls).toBe(3);
+    expect(result.usage.calls).toBe(3);
+    expect(result.toolCalls).toBe(2);
+  });
+
+  it("touches no network of its own", async () => {
+    const world = buildWorld(testCase);
+    const model = agent({ kind: "fetch", url: served.url }, verdict);
+
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("the web-agent baseline must not use the real network");
+    });
+    try {
+      const result = await runWebAgentBaseline(testCase, world, model, signal());
+      expect(result.sourcesFetched).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("is budgeted from TrustLayer's own limits, and says so in the environment", () => {
+    const defaults = webAgentLimits({});
+    // TrustLayer's driver gets TURN_MAX_TOOL_CALLS - 1; so does the baseline.
+    expect(defaults.maxToolCalls).toBe(7);
+    expect(defaults.maxModelCalls).toBeGreaterThanOrEqual(6);
+
+    const overridden = webAgentLimits({
+      EVAL_WEB_BASELINE_MAX_TOOL_CALLS: "12",
+      EVAL_WEB_BASELINE_MAX_MODEL_CALLS: "20",
+    });
+    expect(overridden.maxToolCalls).toBe(12);
+    expect(overridden.maxModelCalls).toBe(20);
   });
 });
