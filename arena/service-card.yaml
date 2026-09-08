@@ -179,6 +179,8 @@ guarantees:
   - A citation to evidence that was not retrieved is discarded, and the claim is downgraded to unverified.
   - A search snippet is discovery only; nothing becomes evidence without being fetched.
   - Sources you supply are retrieved and checked by the host itself, up to three, even if the verifier does not look at them.
+  - A claim is never reported supported on the strength of a source you supplied; independent corroboration is required.
+  - A source you supplied that contradicts your own claim still counts, because that is a citation mismatch worth knowing about.
   - Protocol-completion flags reflect observed tool calls, not model self-report.
   - The verifier held only search and fetch capability, under the purpose trust.verify.
 

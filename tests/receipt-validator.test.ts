@@ -200,4 +200,138 @@ describe("receipt validator", () => {
     const { report } = validateAdjudications(plan, [adjudication()], ledgerWith("e1"));
     expect(report.completed).toBe(true);
   });
+
+  /**
+   * Independence, enforced rather than requested.
+   *
+   * The product is independent verification, so a claim cannot come back
+   * `supported` because the candidate's own source agrees with the candidate.
+   * The rule is deliberately asymmetric: that same source *refuting* the claim
+   * is exactly the citation-mismatch finding the product exists to surface.
+   */
+  describe("independent support", () => {
+    function mixedLedger(): EvidenceLedger {
+      const ledger = new EvidenceLedger();
+      ledger.registerCandidateCitations(["https://candidate.example/its-source"]);
+      // e1: the candidate's own source.
+      ledger.addEvidence(
+        {
+          url: "https://candidate.example/its-source",
+          resolvedUrl: "https://candidate.example/its-source",
+          extractedText: "The candidate's own page.",
+          sourceToolCallId: "call-1",
+          origin: "independent", // the ledger overrides this; the URL was supplied
+          instructionLikeContent: false,
+        },
+        now,
+      );
+      // e2: something this execution found for itself.
+      ledger.addEvidence(
+        {
+          url: "https://independent.example/page",
+          resolvedUrl: "https://independent.example/page",
+          extractedText: "An independently discovered page.",
+          sourceToolCallId: "call-2",
+          origin: "independent",
+          instructionLikeContent: false,
+        },
+        now,
+      );
+      return ledger;
+    }
+
+    it("classifies a supplied URL as a candidate citation whatever the caller said", () => {
+      const ledger = mixedLedger();
+      expect(ledger.getEvidence("e1")?.origin).toBe("candidate_citation");
+      expect(ledger.getEvidence("e2")?.origin).toBe("independent");
+    });
+
+    it("downgrades a claim supported only by the candidate's own source", () => {
+      const { claims, report } = validateAdjudications(
+        plan,
+        [adjudication({ evidence: [{ evidenceId: "e1", relation: "supports", note: "its own" }] })],
+        mixedLedger(),
+      );
+
+      expect(claims[0]?.status).toBe("unverified");
+      expect(claims[0]?.adjusted).toMatch(/no independent supporting source/i);
+      expect(report.candidateOnlySupportClaimIds).toEqual(["k1"]);
+      // The source stays in the receipt: it was really retrieved, and the
+      // reader should be able to see what the candidate was relying on.
+      expect(claims[0]?.evidence).toHaveLength(1);
+    });
+
+    it("keeps a claim supported when an independent source backs it too", () => {
+      const { claims, report } = validateAdjudications(
+        plan,
+        [
+          adjudication({
+            evidence: [
+              { evidenceId: "e1", relation: "supports", note: "candidate's own" },
+              { evidenceId: "e2", relation: "supports", note: "found independently" },
+            ],
+          }),
+        ],
+        mixedLedger(),
+      );
+
+      expect(claims[0]?.status).toBe("supported");
+      expect(claims[0]?.adjusted).toBeUndefined();
+      expect(report.candidateOnlySupportClaimIds).toEqual([]);
+    });
+
+    it("lets the candidate's own source contradict the candidate's claim", () => {
+      const { claims } = validateAdjudications(
+        plan,
+        [
+          adjudication({
+            status: "contradicted",
+            evidence: [
+              { evidenceId: "e1", relation: "contradicts", note: "its own source says otherwise" },
+            ],
+          }),
+        ],
+        mixedLedger(),
+      );
+
+      // A citation that does not say what it was cited for is the finding, not
+      // a technicality to discard.
+      expect(claims[0]?.status).toBe("contradicted");
+      expect(claims[0]?.adjusted).toBeUndefined();
+    });
+
+    it("rejects a fabricated id even when the real citations are candidate-supplied", () => {
+      const { claims, report } = validateAdjudications(
+        plan,
+        [
+          adjudication({
+            evidence: [
+              { evidenceId: "e1", relation: "supports", note: "candidate's own" },
+              { evidenceId: "e99", relation: "supports", note: "invented" },
+            ],
+          }),
+        ],
+        mixedLedger(),
+      );
+
+      expect(report.fabricatedEvidenceIds).toEqual(["e99"]);
+      // What is left is candidate-only, so the claim still cannot stand.
+      expect(claims[0]?.status).toBe("unverified");
+      expect(claims[0]?.evidence.map((entry) => entry.evidenceId)).toEqual(["e1"]);
+    });
+
+    it("does not invent a relation to an independent source the model never cited", () => {
+      const { claims } = validateAdjudications(
+        plan,
+        [adjudication({ evidence: [{ evidenceId: "e1", relation: "supports", note: "its own" }] })],
+        mixedLedger(),
+      );
+
+      // e2 was retrieved and is independent, but the model did not connect it
+      // to this claim. Reading it as support would be the host inventing an
+      // evidence relation, which is the thing this layer exists to prevent.
+      expect(claims[0]?.status).toBe("unverified");
+      expect(claims[0]?.evidence.map((entry) => entry.evidenceId)).not.toContain("e2");
+    });
+  });
 });

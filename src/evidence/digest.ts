@@ -48,3 +48,34 @@ export function domainOf(url: string): string {
     return "";
   }
 }
+
+/**
+ * A URL reduced to what identifies the source.
+ *
+ * Used only for deciding whether two URLs name the same source — chiefly
+ * whether a fetched page is one the candidate supplied. Scheme and host are
+ * lower-cased, a default port and a fragment are dropped, and a bare trailing
+ * slash is ignored. Query strings are kept: `?id=7` usually is a different
+ * page. Anything unparseable falls back to a trimmed string compare rather
+ * than throwing, because failing closed here would mean treating a
+ * candidate's own source as independent.
+ */
+export function canonicalUrl(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return raw.trim().toLowerCase();
+  }
+
+  parsed.hash = "";
+  const path = parsed.pathname.endsWith("/") && parsed.pathname !== "/"
+    ? parsed.pathname.slice(0, -1)
+    : parsed.pathname;
+
+  const host = parsed.hostname.toLowerCase();
+  const port = parsed.port === "" ? "" : `:${parsed.port}`;
+  const normalizedPath = path === "/" ? "" : path;
+
+  return `${parsed.protocol.toLowerCase()}//${host}${port}${normalizedPath}${parsed.search}`;
+}

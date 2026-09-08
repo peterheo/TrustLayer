@@ -47,7 +47,10 @@ The case to make:
    producing agent claimed and TrustLayer retrieves them — the host does it
    itself if the verifier skips them — and reports whether the page actually
    supports the claim. They are labelled as candidate citations in the receipt,
-   never counted as independent corroboration.
+   and the host will not let one carry a `supported` verdict on its own — that
+   would be the candidate agreeing with itself. If it turns out to contradict
+   the claim it was cited for, that counts fully, because a citation mismatch
+   is exactly what you wanted to find out.
 5. **The host does not believe the verifier.** Cited evidence IDs are checked
    against a ledger of what the tools actually returned. An invented citation is
    discarded and the claim drops to `unverified` — so the receipt cannot be

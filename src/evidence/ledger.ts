@@ -1,4 +1,4 @@
-import { IdSequence, domainOf, sha256 } from "./digest.js";
+import { IdSequence, canonicalUrl, domainOf, sha256 } from "./digest.js";
 import type {
   EvidenceOrigin,
   EvidenceRecord,
@@ -65,11 +65,19 @@ export class EvidenceLedger {
    * independently discovered evidence.
    */
   registerCandidateCitations(urls: readonly string[]): void {
-    for (const url of urls) this.#candidateCitationUrls.add(url);
+    for (const url of urls) this.#candidateCitationUrls.add(canonicalUrl(url));
   }
 
+  /**
+   * Whether a URL is one the candidate supplied.
+   *
+   * Matched canonically, so a trailing slash, a default port, an upper-case
+   * host or a tracking fragment cannot launder a candidate's own source into
+   * independent corroboration. A source the candidate cited stays its source
+   * even if a later search rediscovers it.
+   */
   isCandidateCitation(url: string): boolean {
-    return this.#candidateCitationUrls.has(url);
+    return this.#candidateCitationUrls.has(canonicalUrl(url));
   }
 
   get candidateCitationCount(): number {
@@ -118,6 +126,14 @@ export class EvidenceLedger {
     const candidateId =
       this.#candidatesByUrl.get(input.url) ?? this.#candidatesByUrl.get(input.resolvedUrl);
 
+    // Origin is decided here rather than taken on trust: if either the
+    // requested URL or the one a redirect landed on is a source the candidate
+    // supplied, this is a candidate citation whatever the caller believed.
+    const origin: EvidenceOrigin =
+      this.isCandidateCitation(input.url) || this.isCandidateCitation(input.resolvedUrl)
+        ? "candidate_citation"
+        : input.origin;
+
     const record: EvidenceRecord = {
       evidenceId: this.#evidenceIds.mint(),
       url: input.url,
@@ -129,7 +145,7 @@ export class EvidenceLedger {
       contentSha256: sha256(input.extractedText),
       sourceToolCallId: input.sourceToolCallId,
       ...(candidateId === undefined ? {} : { searchCandidateId: candidateId }),
-      origin: input.origin,
+      origin,
       instructionLikeContent: input.instructionLikeContent,
     };
     this.#evidence.set(record.evidenceId, record);
@@ -163,6 +179,11 @@ export class EvidenceLedger {
 
   get candidateCount(): number {
     return this.#candidates.size;
+  }
+
+  /** Evidence this execution found for itself, rather than being handed. */
+  independentEvidence(): readonly EvidenceRecord[] {
+    return this.listEvidence().filter((record) => record.origin === "independent");
   }
 
   distinctDomains(): number {

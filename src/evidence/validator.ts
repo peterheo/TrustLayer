@@ -18,6 +18,14 @@ import type {
  * Downgrades always move toward `unverified`, never toward `contradicted`:
  * evidence that turns out not to exist is missing evidence, and missing
  * evidence is not disproof.
+ *
+ * Independence is enforced here too. TrustLayer is sold as independent
+ * verification, so a claim cannot end up `supported` on the strength of a
+ * source the candidate handed us: that is the candidate agreeing with itself,
+ * and a prompt asking the model to bear it in mind is not an enforcement
+ * mechanism. Contradiction is deliberately not held to the same rule — a
+ * candidate's own cited source refuting its claim is among the most damning
+ * evidence there is, and refusing to count it would protect the error.
  */
 
 export interface ValidationReport {
@@ -27,6 +35,8 @@ export interface ValidationReport {
   readonly unknownClaimIds: readonly string[];
   /** Claim IDs downgraded for want of surviving evidence. */
   readonly downgradedClaimIds: readonly string[];
+  /** Claims that had support, but only from the candidate's own sources. */
+  readonly candidateOnlySupportClaimIds: readonly string[];
   /** Planned claims the model never adjudicated at all. */
   readonly unadjudicatedClaimIds: readonly string[];
   /** True when validation ran to completion over every planned claim. */
@@ -56,11 +66,29 @@ function keepRealCitations(
 }
 
 /**
+ * Whether a set of surviving citations contains real independent support.
+ *
+ * "Independent" is the ledger's own classification of how the source came to
+ * be retrieved, not a property the model can assert: a URL the caller supplied
+ * stays a candidate citation even when a later search rediscovers it.
+ */
+export function hasIndependentSupport(
+  references: readonly EvidenceReference[],
+  ledger: EvidenceLedger,
+): boolean {
+  return references.some((reference) => {
+    if (reference.relation !== "supports") return false;
+    return ledger.getEvidence(reference.evidenceId)?.origin === "independent";
+  });
+}
+
+/**
  * Validate one adjudication against the plan and the ledger.
  *
  * A `supported` claim needs at least one surviving citation whose relation is
- * `supports`; a `contradicted` claim needs one whose relation is `contradicts`.
- * A model that cites a real source but with the wrong relation has not
+ * `supports`, and at least one of those must be independent evidence; a
+ * `contradicted` claim needs one whose relation is `contradicts`, from either
+ * origin. A model that cites a real source but with the wrong relation has not
  * established what it says it has, so that is a downgrade too.
  */
 function validateOne(
@@ -69,6 +97,7 @@ function validateOne(
   ledger: EvidenceLedger,
   fabricated: Set<string>,
   downgraded: string[],
+  candidateOnly: string[],
 ): ReceiptClaim {
   if (adjudication === undefined) {
     return {
@@ -111,6 +140,24 @@ function validateOne(
           `${needed} the claim. Downgraded to unverified.`,
       };
     }
+
+    // Support has to come from somewhere other than the thing under test.
+    // The candidate's own source stays in the receipt — it is a real
+    // retrieval and the reader should see it — but it cannot carry the
+    // verdict on its own.
+    if (adjudication.status === "supported" && !hasIndependentSupport(evidence, ledger)) {
+      downgraded.push(planned.claimId);
+      candidateOnly.push(planned.claimId);
+      return {
+        ...base,
+        status: "unverified",
+        confidence: Math.min(adjudication.confidence, 0.3),
+        evidence,
+        adjusted:
+          "Candidate-supplied evidence supports this claim, but no independent supporting " +
+          "source was retrieved. Downgraded to unverified.",
+      };
+    }
   }
 
   return base;
@@ -133,12 +180,13 @@ export function validateAdjudications(
 
   const fabricated = new Set<string>();
   const downgraded: string[] = [];
+  const candidateOnly: string[] = [];
   const unadjudicated: string[] = [];
 
   const claims = plan.map((planned) => {
     const adjudication = byClaimId.get(planned.claimId);
     if (adjudication === undefined) unadjudicated.push(planned.claimId);
-    return validateOne(planned, adjudication, ledger, fabricated, downgraded);
+    return validateOne(planned, adjudication, ledger, fabricated, downgraded, candidateOnly);
   });
 
   // Judgments about claims nobody planned are discarded rather than reported:
@@ -153,6 +201,7 @@ export function validateAdjudications(
       fabricatedEvidenceIds: [...fabricated],
       unknownClaimIds,
       downgradedClaimIds: downgraded,
+      candidateOnlySupportClaimIds: candidateOnly,
       unadjudicatedClaimIds: unadjudicated,
       completed: true,
     },

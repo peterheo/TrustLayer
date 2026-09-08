@@ -147,6 +147,14 @@ Everything the receipt presents as fact is produced elsewhere:
   the verifier the contents as data to judge. So
   `checks.candidateCitationsChecked` reports what was retrieved rather than
   whether the model felt like looking.
+- **Independence is enforced, not requested.** A claim cannot come back
+  `supported` on the strength of a source the candidate supplied — that is the
+  candidate agreeing with itself. At least one surviving `supports` citation
+  must point at evidence the ledger classifies as independent, or the claim is
+  downgraded to `unverified` with the reason stated. The candidate's source
+  stays in the receipt either way. Contradiction is deliberately *not* held to
+  the same rule: a candidate's own cited source refuting its claim is the
+  citation-mismatch finding, not a technicality.
 - **Citations are validated** against that ledger. Invented IDs are discarded;
   a `supported` or `contradicted` claim with no surviving citation of the right
   relation is downgraded to `unverified` — never to `contradicted`, because
@@ -267,7 +275,7 @@ body runs.
 ## Tests
 
 ```
-pnpm test        # 192 tests
+pnpm test        # 201 tests
 pnpm typecheck
 ```
 

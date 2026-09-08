@@ -286,4 +286,93 @@ describe("candidate citation validation", () => {
     expect(receipt.claims[0]?.status).toBe("unverified");
     expect(receipt.claims[0]?.adjusted).toMatch(/no retrieved source/i);
   });
+
+  /**
+   * Independence has to survive the whole pipeline, not just the validator.
+   *
+   * TrustLayer is sold as verification that does not take the candidate's word
+   * for anything — including which sources are worth believing.
+   */
+  describe("independence end to end", () => {
+    it("will not call a claim supported on the candidate's own source alone", async () => {
+      stubPages();
+      const model = new ScriptedVerifierModel([
+        PLAN_STEP,
+        fetchStep(CANDIDATE_URL, "call-1"),
+        RESEARCH_DONE,
+        searchStep("Widget X price", "call-2"),
+        CHALLENGE_DONE,
+        adjudicateStep(),
+      ]);
+
+      const receipt = await verify(request, { host: host(), model });
+
+      expect(receipt.claims[0]?.status).toBe("unverified");
+      expect(receipt.claims[0]?.adjusted).toMatch(/no independent supporting source/i);
+      expect(receipt.overallStatus).toBe("unverified");
+      // The candidate's source is still shown — it was really retrieved.
+      expect(receipt.evidence[0]?.origin).toBe("candidate_citation");
+    });
+
+    it("calls it supported once an independent source backs it too", async () => {
+      stubPages();
+      const model = new ScriptedVerifierModel([
+        PLAN_STEP,
+        fetchStep(CANDIDATE_URL, "call-1"),
+        searchStep("Widget X price", "call-2"),
+        fetchStep("https://example.org/widget-x-pricing", "call-3"),
+        RESEARCH_DONE,
+        searchStep("Widget X price increase", "call-4"),
+        CHALLENGE_DONE,
+        adjudicateStep(
+          adjudication({
+            adjudications: [
+              {
+                claimId: "k1",
+                status: "supported",
+                confidence: 0.9,
+                rationale: "Both the candidate's source and an independent page list $79.",
+                evidence: [
+                  { evidenceId: "e1", relation: "supports", note: "candidate's own" },
+                  { evidenceId: "e2", relation: "supports", note: "independent" },
+                ],
+              },
+            ],
+          }),
+        ),
+      ]);
+
+      const receipt = await verify(request, { host: host(), model });
+
+      expect(receipt.claims[0]?.status).toBe("supported");
+      expect(receipt.claims[0]?.adjusted).toBeUndefined();
+    });
+
+    it("still counts a rediscovered candidate URL as the candidate's source", async () => {
+      stubPages();
+      const model = new ScriptedVerifierModel([
+        PLAN_STEP,
+        searchStep("Widget X price", "call-1"),
+        // Same source, found through search this time, and spelled with a
+        // different case and a trailing slash. Canonical matching decides.
+        fetchStep("https://EXAMPLE.org/widget-x-pricing/", "call-2"),
+        RESEARCH_DONE,
+        searchStep("Widget X price increase", "call-3"),
+        CHALLENGE_DONE,
+        adjudicateStep(),
+      ]);
+
+      const receipt = await verify(
+        { ...request, sourceUrls: ["https://example.org/widget-x-pricing"] },
+        { host: host(), model },
+      );
+
+      const rediscovered = receipt.evidence.find((entry) =>
+        entry.url.toLowerCase().includes("widget-x-pricing"),
+      );
+      expect(rediscovered?.origin).toBe("candidate_citation");
+      // And so it cannot launder itself into independent support.
+      expect(receipt.claims[0]?.status).toBe("unverified");
+    });
+  });
 });
