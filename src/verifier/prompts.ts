@@ -206,6 +206,11 @@ export function adjudicateInstruction(plan: readonly PlannedClaim[]): string {
     "",
     "Cite only evidenceId values that research.fetch actually returned to you in this run.",
     "A citation to anything else will be discarded and the claim downgraded, so do not guess.",
+    "",
+    "With each citation you may include a `quote`: a short passage copied verbatim from that",
+    "source's text. It is checked character-for-character against what was retrieved, so copy",
+    "rather than paraphrase — a quote that does not match exactly is dropped, and one that",
+    "matches is shown in the receipt with the offsets where it was found.",
     "If you did not retrieve evidence for a claim, say unverified. That is a normal, useful",
     "answer and is far better than an unsupported one.",
     "",
@@ -290,6 +295,14 @@ export const ADJUDICATION_JSON_SCHEMA = {
                 },
                 relation: { type: "string", enum: ["supports", "contradicts"] },
                 note: { type: "string" },
+                quote: {
+                  type: "string",
+                  maxLength: 300,
+                  description:
+                    "Optional. A short passage copied verbatim from that source's text. " +
+                    "It is checked character-for-character against what was retrieved; " +
+                    "a paraphrase or an approximation is discarded.",
+                },
               },
             },
           },

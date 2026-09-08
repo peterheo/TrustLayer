@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { EvidenceLedger } from "../src/evidence/ledger.js";
 import { validateAdjudications } from "../src/evidence/validator.js";
-import type { ClaimAdjudication, PlannedClaim } from "../src/evidence/schemas.js";
+import {
+  AdjudicationSubmissionSchema,
+  MAX_QUOTE_LENGTH,
+  type ClaimAdjudication,
+  type PlannedClaim,
+} from "../src/evidence/schemas.js";
 
 /**
  * The step where the host stops believing the model.
@@ -332,6 +337,168 @@ describe("receipt validator", () => {
       // evidence relation, which is the thing this layer exists to prevent.
       expect(claims[0]?.status).toBe("unverified");
       expect(claims[0]?.evidence.map((entry) => entry.evidenceId)).not.toContain("e2");
+    });
+  });
+
+  /**
+   * Quotes: the model chooses what to show, the host proves it was there.
+   *
+   * An excerpt is the most directly checkable thing a receipt can carry, and
+   * for exactly that reason an unverified one is the most damaging. So a quote
+   * reaches the receipt only as a span the host located character-for-character
+   * in the text that was actually retrieved.
+   */
+  describe("evidence excerpts", () => {
+    const PAGE =
+      "Widget X pricing. The Acme Widget Pro is priced at $79.00 including a two-year warranty.";
+    const OTHER = "An unrelated page about quokka husbandry.";
+
+    function quotedLedger(): EvidenceLedger {
+      const ledger = new EvidenceLedger();
+      for (const text of [PAGE, OTHER]) {
+        ledger.addEvidence(
+          {
+            url: "https://example.org/page",
+            resolvedUrl: "https://example.org/page",
+            extractedText: text,
+            sourceToolCallId: "call-1",
+            origin: "independent",
+            instructionLikeContent: false,
+          },
+          now,
+        );
+      }
+      return ledger;
+    }
+
+    it("locates a verbatim quote and reports where it was found", () => {
+      const ledger = quotedLedger();
+      const { claims } = validateAdjudications(
+        plan,
+        [
+          adjudication({
+            evidence: [
+              {
+                evidenceId: "e1",
+                relation: "supports",
+                note: "the listed price",
+                quote: "priced at $79.00",
+              },
+            ],
+          }),
+        ],
+        ledger,
+      );
+
+      const span = claims[0]?.spans?.[0];
+      expect(span?.evidenceId).toBe("e1");
+      expect(span?.excerpt).toBe("priced at $79.00");
+      // The offsets are into the same text the content digest covers, so a
+      // reader can check the excerpt against the source for themselves.
+      const text = ledger.getEvidence("e1")!.extractedText;
+      expect(text.slice(span!.start, span!.end)).toBe("priced at $79.00");
+    });
+
+    it("drops a quote that is not in the source, however plausible", () => {
+      const { claims } = validateAdjudications(
+        plan,
+        [
+          adjudication({
+            evidence: [
+              {
+                evidenceId: "e1",
+                relation: "supports",
+                note: "invented",
+                quote: "the price is $79 and has not changed since 2024",
+              },
+            ],
+          }),
+        ],
+        quotedLedger(),
+      );
+
+      // The citation survives — the source is real — but the quote does not.
+      expect(claims[0]?.status).toBe("supported");
+      expect(claims[0]?.spans).toBeUndefined();
+    });
+
+    it("drops a real quote attributed to the wrong source", () => {
+      const { claims } = validateAdjudications(
+        plan,
+        [
+          adjudication({
+            evidence: [
+              // The passage exists — on e1, not on e2.
+              { evidenceId: "e2", relation: "supports", note: "wrong source", quote: "priced at $79.00" },
+            ],
+          }),
+        ],
+        quotedLedger(),
+      );
+
+      expect(claims[0]?.spans).toBeUndefined();
+    });
+
+    it("never carries a quote attached to a fabricated evidence id", () => {
+      const { claims, report } = validateAdjudications(
+        plan,
+        [
+          adjudication({
+            evidence: [
+              { evidenceId: "e1", relation: "supports", note: "real", quote: "priced at $79.00" },
+              { evidenceId: "e99", relation: "supports", note: "invented", quote: "priced at $79.00" },
+            ],
+          }),
+        ],
+        quotedLedger(),
+      );
+
+      expect(report.fabricatedEvidenceIds).toEqual(["e99"]);
+      expect(claims[0]?.spans).toHaveLength(1);
+      expect(claims[0]?.spans?.[0]?.evidenceId).toBe("e1");
+    });
+
+    it("leaves no unverified quote anywhere in the receipt claim", () => {
+      const { claims } = validateAdjudications(
+        plan,
+        [
+          adjudication({
+            evidence: [
+              { evidenceId: "e1", relation: "supports", note: "n", quote: "not in the page at all" },
+            ],
+          }),
+        ],
+        quotedLedger(),
+      );
+
+      expect(JSON.stringify(claims)).not.toContain("not in the page at all");
+    });
+
+    it("bounds what a quote may propose in the first place", () => {
+      const submission = {
+        summary: "s",
+        adjudications: [
+          {
+            claimId: "k1",
+            status: "supported",
+            confidence: 0.9,
+            rationale: "r",
+            evidence: [
+              {
+                evidenceId: "e1",
+                relation: "supports",
+                note: "n",
+                quote: "x".repeat(MAX_QUOTE_LENGTH + 1),
+              },
+            ],
+          },
+        ],
+        suspiciousInstructions: { detected: false, indicators: [] },
+      };
+
+      expect(AdjudicationSubmissionSchema.safeParse(submission).success).toBe(false);
+      submission.adjudications[0]!.evidence[0]!.quote = "x".repeat(MAX_QUOTE_LENGTH);
+      expect(AdjudicationSubmissionSchema.safeParse(submission).success).toBe(true);
     });
   });
 });

@@ -163,12 +163,24 @@ export const ClaimStatusSchema = z.enum([
 ]);
 export type ClaimStatus = z.infer<typeof ClaimStatusSchema>;
 
+/** The longest excerpt a citation may propose. Long enough to quote, not to republish. */
+export const MAX_QUOTE_LENGTH = 300;
+
 export const EvidenceReferenceSchema = z
   .object({
     /** Must be an evidenceId the ledger actually minted. Validated post-turn. */
     evidenceId: z.string().min(1).max(64),
     relation: z.enum(["supports", "contradicts"]),
     note: z.string().max(1_000),
+    /**
+     * A passage the model says it relied on.
+     *
+     * A proposal, not a fact. The host checks it against the exact quarantined
+     * text that was retrieved, and only a verbatim match reaches the receipt —
+     * as a span with host-computed offsets. A paraphrase, a plausible-looking
+     * invention, or a real quote attributed to the wrong source is dropped.
+     */
+    quote: z.string().max(MAX_QUOTE_LENGTH).optional(),
   })
   .strict();
 
@@ -214,6 +226,20 @@ export type AdjudicationSubmission = z.infer<typeof AdjudicationSubmissionSchema
 export type OverallStatus = "supported" | "mixed" | "contradicted" | "unverified";
 export type ProtocolStatus = "complete" | "partial" | "failed";
 
+/**
+ * A passage the host confirmed was in the retrieved text.
+ *
+ * The model chooses what to quote; the host proves the quote existed, and
+ * says where. Offsets are into the same quarantined text the content digest
+ * covers, so a reader can check the excerpt against the source themselves.
+ */
+export interface ReceiptEvidenceSpan {
+  readonly evidenceId: string;
+  readonly excerpt: string;
+  readonly start: number;
+  readonly end: number;
+}
+
 export interface ReceiptClaim {
   readonly claimId: string;
   readonly claim: string;
@@ -223,6 +249,8 @@ export interface ReceiptClaim {
   readonly rationale: string;
   /** Evidence IDs that survived validation, in the relation the model gave. */
   readonly evidence: readonly EvidenceReference[];
+  /** Quotes the host verified against the retrieved text. Absent when none did. */
+  readonly spans?: readonly ReceiptEvidenceSpan[];
   /** Set when the host changed the model's status, and why. */
   readonly adjusted?: string;
 }

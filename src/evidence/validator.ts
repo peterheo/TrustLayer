@@ -4,6 +4,7 @@ import type {
   EvidenceReference,
   PlannedClaim,
   ReceiptClaim,
+  ReceiptEvidenceSpan,
 } from "./schemas.js";
 
 /**
@@ -48,7 +49,13 @@ export interface ValidationResult {
   readonly report: ValidationReport;
 }
 
-/** A citation counts only if it points at evidence the ledger holds. */
+/**
+ * A citation counts only if it points at evidence the ledger holds.
+ *
+ * The proposed `quote` is dropped here whatever happens to it: an unverified
+ * quote must never reach the receipt, and a verified one reaches it as a span
+ * with host-computed offsets instead.
+ */
 function keepRealCitations(
   references: readonly EvidenceReference[],
   ledger: EvidenceLedger,
@@ -57,12 +64,49 @@ function keepRealCitations(
   const kept: EvidenceReference[] = [];
   for (const reference of references) {
     if (ledger.hasEvidence(reference.evidenceId)) {
-      kept.push(reference);
+      const { quote: _quote, ...withoutQuote } = reference;
+      kept.push(withoutQuote);
     } else {
       fabricated.add(reference.evidenceId);
     }
   }
   return kept;
+}
+
+/**
+ * Prove the quotes, or drop them.
+ *
+ * A span is produced only when the proposed passage appears verbatim in the
+ * exact quarantined text that was retrieved — the same text the content digest
+ * covers. Nothing here approximates, normalises whitespace, or searches other
+ * sources for a match: a quote attributed to the wrong page is as wrong as one
+ * that was never written.
+ */
+export function verifyQuotes(
+  references: readonly EvidenceReference[],
+  ledger: EvidenceLedger,
+): readonly ReceiptEvidenceSpan[] {
+  const spans: ReceiptEvidenceSpan[] = [];
+
+  for (const reference of references) {
+    const quote = reference.quote;
+    if (quote === undefined || quote.length === 0) continue;
+
+    const record = ledger.getEvidence(reference.evidenceId);
+    if (record === undefined) continue;
+
+    const start = record.extractedText.indexOf(quote);
+    if (start < 0) continue;
+
+    spans.push({
+      evidenceId: reference.evidenceId,
+      excerpt: quote,
+      start,
+      end: start + quote.length,
+    });
+  }
+
+  return spans;
 }
 
 /**
@@ -113,6 +157,12 @@ function validateOne(
   }
 
   const evidence = keepRealCitations(adjudication.evidence, ledger, fabricated);
+  // Quotes are checked against the citations that survived, so a quote cannot
+  // ride into the receipt on a fabricated evidence id.
+  const spans = verifyQuotes(
+    adjudication.evidence.filter((reference) => ledger.hasEvidence(reference.evidenceId)),
+    ledger,
+  );
 
   const base: ReceiptClaim = {
     claimId: planned.claimId,
@@ -122,6 +172,7 @@ function validateOne(
     confidence: adjudication.confidence,
     rationale: adjudication.rationale,
     evidence,
+    ...(spans.length === 0 ? {} : { spans }),
   };
 
   if (adjudication.status === "supported" || adjudication.status === "contradicted") {

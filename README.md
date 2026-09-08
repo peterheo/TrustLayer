@@ -155,6 +155,12 @@ Everything the receipt presents as fact is produced elsewhere:
   stays in the receipt either way. Contradiction is deliberately *not* held to
   the same rule: a candidate's own cited source refuting its claim is the
   citation-mismatch finding, not a technicality.
+- **Quotes are proven, not repeated.** A citation may propose a short `quote`.
+  The host looks for it character-for-character in the exact quarantined text
+  that was retrieved — the same text the content digest covers — and publishes
+  it as a span with host-computed offsets. A paraphrase, an invention, or a
+  real passage attributed to the wrong page is dropped, and no unverified quote
+  appears anywhere in the receipt.
 - **Citations are validated** against that ledger. Invented IDs are discarded;
   a `supported` or `contradicted` claim with no surviving citation of the right
   relation is downgraded to `unverified` — never to `contradicted`, because
@@ -186,7 +192,9 @@ Everything the receipt presents as fact is produced elsewhere:
     "claimId": "k1", "claim": "Widget X costs $79.",
     "importance": "critical", "status": "supported", "confidence": 0.9,
     "rationale": "…",
-    "evidence": [{ "evidenceId": "e1", "relation": "supports", "note": "…" }]
+    "evidence": [{ "evidenceId": "e1", "relation": "supports", "note": "…" }],
+    // Quotes the host located verbatim in the retrieved text, with offsets.
+    "spans": [{ "evidenceId": "e1", "excerpt": "priced at $79.00", "start": 34, "end": 50 }]
     // "adjusted": present whenever the host changed the model's status
   }],
   "evidence": [{
@@ -281,7 +289,7 @@ body runs.
 ## Tests
 
 ```
-pnpm test        # 226 tests
+pnpm test        # 232 tests
 pnpm typecheck
 ```
 
