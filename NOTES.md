@@ -158,3 +158,45 @@ credit prices. Everything behind those functions is complete and tested.
 The brief quotes an Arena date of "Wednesday, September 11" from the archive.
 The archive is absent and that date is unverifiable here. **Confirm deadlines
 against the live Devpost page and organizer Discord.** No code depends on it.
+
+## 8. Remaining-work spec: state at handoff
+
+Against `TrustLayer_Remaining_Work_Spec.md`, as of this commit.
+
+**Done in code, with tests:**
+
+| Spec item | Where |
+| --- | --- |
+| P1 §4 independent-support enforcement | `src/evidence/validator.ts`, `src/evidence/ledger.ts` |
+| P1 §5 challenge search vs challenge retrieval | `src/verifier/protocol.ts`, `src/evidence/receipt.ts`, `src/verifier/driver.ts` |
+| P1 §6 equal-resource web-agent baseline | `evals/baseline-web-agent.ts` |
+| P1 §7 harness: repetitions, cost-per-catch, preserved artifacts | `evals/run.ts`, `evals/report.ts`, `evals/metrics.ts` |
+| P2 §8 validated evidence excerpts | `src/evidence/validator.ts` (`verifyQuotes`) |
+| P2 §9 personal-agent brief rename | `arena/PERSONAL_AGENT_BRIEF.md` |
+
+`methodVersion` deliberately stays `trustlayer-evidence-v1`: no receipt has
+been issued outside this repository, so §5 is completing the method rather than
+changing one already in the field. It must be bumped if that stops being true.
+
+**Blocked, and on what:**
+
+- **P0 §3, Arena / SharedOS Cloud integration.** Nothing organizer-side exists
+  in this environment: no Cloud instructions, no SharedNet registration schema,
+  no Arena service schema, no discovery or delivery contract, no credentials
+  (§1 above still holds — re-checked at this commit). Per the spec's own rule,
+  no endpoint, field name, or service ID has been invented. `handleServiceCall`
+  and `handleCheckCall` remain the seam; binding them should touch
+  `src/arena/` and `arena/` only.
+- **P1 §7, the actual benchmark run.** Needs `MODEL_API_KEY`, which is not set
+  here. `pnpm eval` refuses to start without it rather than emitting numbers
+  that would read as results. Everything else the run needs is built: four
+  systems, matched budgets, measured usage, repetitions, and artifact writing.
+- **P2 §10, live production smoke tests.** Needs a real model, a real search
+  provider, and the organizer SharedOS environment.
+- **P2 §9 remainder** — measured latency, confirmed credit prices, organizer
+  field names, real service IDs — depends on P0 and on the benchmark run.
+
+**Standing rule for whoever picks this up:** no public copy quotes a measured
+comparison, because no comparison has been measured. The README, the service
+card and the personal-agent brief all say so explicitly. Do not soften that
+until `evals/results/` contains a real run.

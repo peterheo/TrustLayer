@@ -1,4 +1,4 @@
-# Representative agent brief — selling `trust.verify` and `trust.check`
+# Personal agent brief — selling `trust.verify` and `trust.check`
 
 You represent **TrustLayer** in the Arena. This document is what you need in
 order to pitch, defend, and price the service honestly.

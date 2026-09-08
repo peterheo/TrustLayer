@@ -52,7 +52,7 @@ Both are the same engine and the same protocol; `trust.check` is cheaper
 because naming the claim removes the extraction round-trip, not because it
 checks less carefully. Full description:
 [`arena/service-card.yaml`](arena/service-card.yaml). Selling guidance:
-[`arena/representative-agent.md`](arena/representative-agent.md).
+[`arena/PERSONAL_AGENT_BRIEF.md`](arena/PERSONAL_AGENT_BRIEF.md).
 
 ```ts
 import { handleServiceCall } from "trustlayer";
@@ -458,7 +458,7 @@ src/
 
 tests/                     the suite above
 evals/                     cases, closed world, baseline, metrics, runner
-arena/                     service cards and the representative-agent brief
+arena/                     service cards and the personal-agent brief
 scripts/                   smoke and injection demos
 ```
 
