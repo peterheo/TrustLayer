@@ -432,3 +432,23 @@ yet" on that page, which is why §10 went to the npm package instead; and Cloud
 setup still routes to `/get-started#cloud-preview`, where event integration is
 described as configured "separately during onboarding" with a contact address.
 The tenant id and owner address are still organizer-side.
+
+## 14. Organizer check, and one guard reconsidered — 2026-09-09
+
+Checked every organizer surface for anything new: the hackathon page, the
+Devpost page and its Updates tab ("Stay tuned for important announcements" —
+none posted), the live SharedNet capability list (unchanged; still no
+services, offers or credits), npm (`sharednet` still 0.1.3, `@aicoo/sharedos`
+still alpha.5, which §13 already took), and the upstream repo (nothing since
+the alpha.5 release). Our seat sees one room, "Test"; the inbox is empty and
+there are no pending decisions, so no Arena room and no invite yet.
+
+One line on the hackathon page did change a decision: **"once the Arena opens,
+humans don't touch the keyboard."** Yesterday's burst guard *stopped* the room
+service, which under that rule is a self-inflicted outage — a dozen malformed
+calls inside a minute is an ordinary market, and going quiet for the rest of
+the round costs every sale after it. The rate guard now pauses for the
+remainder of the window and carries on (the caller waits; the call is answered
+late rather than dropped), and only an absolute ceiling across the whole run —
+400 replies, which a sequential service answering real calls cannot approach —
+stops it for good. A loop of failures still hits that in minutes.

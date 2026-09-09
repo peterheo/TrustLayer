@@ -667,7 +667,52 @@ describe("sharednet room service guards", () => {
     expect(posted).toHaveLength(1);
   });
 
-  it("stops rather than flooding a room if replies ever run away", async () => {
+  it("keeps selling through a burst instead of shutting itself off", async () => {
+    // The Arena is hands-off once it opens: a guard that stops the service is
+    // its own outage. A busy minute must slow it down, not silence it.
+    let sequence = 0;
+    const posted: string[] = [];
+    const call = '@trustlayer ```json{"task":"t","candidate_output":"c"}```';
+    const fetchImpl = (async (url: unknown, init: RequestInit = {}) => {
+      const target = String(url);
+      if (target.includes("/heartbeat")) return new Response("{}", { status: 200 });
+      if (target.includes("/messages?")) return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (target.includes("/wait")) {
+        sequence += 1;
+        return new Response(
+          JSON.stringify({
+            items: [{ id: `msg_${sequence}`, sequence, content: call, sender_instance_id: "i_caller" }],
+          }),
+          { status: 200 },
+        );
+      }
+      if (target.includes("/messages")) {
+        posted.push(JSON.parse(String(init.body)).content as string);
+        return new Response(JSON.stringify({ message: { id: "m" } }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 2_000).unref();
+
+    await runRoomService({
+      client: new SharedNetClient({ instanceToken: "sni_t", fetch: fetchImpl }),
+      roomId: "rom_1",
+      memberId: "i_us",
+      signal: controller.signal,
+      waitSeconds: 0,
+      idleDelayMs: 1,
+      // Two per 50ms window: it pauses, then serves the next window.
+      maxRepliesPerWindow: 2,
+      replyWindowMs: 50,
+    });
+
+    // More than one window's worth got answered, which is the point.
+    expect(posted.length).toBeGreaterThan(2);
+  });
+
+  it("stops for good only when replies pass a ceiling no market reaches", async () => {
     // A room that turns every reply into a fresh, valid call.
     let sequence = 0;
     const posted: string[] = [];
@@ -703,11 +748,12 @@ describe("sharednet room service guards", () => {
       signal: controller.signal,
       waitSeconds: 0,
       idleDelayMs: 1,
-      maxRepliesPerWindow: 3,
+      maxRepliesPerWindow: 1_000,
       replyWindowMs: 60_000,
+      maxRepliesPerRun: 3,
     });
 
-    // It stops at the limit instead of posting until someone notices.
+    // It stops at the ceiling instead of posting until someone notices.
     expect(posted).toHaveLength(3);
   });
 });

@@ -238,8 +238,11 @@ Verified by running it, not by reading docs (`NOTES.md` §12 has the detail):
   `member_id` — check the wrong one and the service answers itself forever;
 - every reply carries a marker that `parseCall` refuses, so an echo, a second
   instance, or a quoted receipt cannot restart the loop;
-- the loop answers a message once, stops past a reply burst, and yields through
-  a real timer each pass so a non-blocking poll cannot spin uninterruptibly;
+- the loop answers a message once, yields through a real timer each pass so a
+  non-blocking poll cannot spin uninterruptibly, **pauses** through a burst
+  rather than stopping (the Arena is hands-off once it opens, so a guard that
+  shuts the service off is its own outage), and stops for good only past an
+  absolute ceiling no real market reaches;
 - it starts at the room's **head**, so a restart does not replay — and
   re-charge for — every call in the history.
 
@@ -264,6 +267,21 @@ fit the 32 KB cap, shedding the JSON block, then the evidence list, then the
 claim detail — never the verdict, the coverage or the execution ids.
 
 A message that does not name us gets no reply at all.
+
+### Running it unattended on the night
+
+The rules are explicit: *"once the Arena opens, humans don't touch the
+keyboard."* So the service has to survive two hours alone. What that means
+here:
+
+- `pnpm room:serve` heartbeats every 30s against the 90s lease, retries a
+  failed poll, and keeps a stable node id across restarts;
+- a busy minute pauses the loop, it does not stop it;
+- a failed verification answers honestly ("NO RECEIPT … nothing is charged")
+  instead of going silent, so a caller is never left waiting;
+- a restart starts at the room's head, so nothing is re-answered or re-charged.
+
+Start it before the round opens, watch stderr, and leave it alone.
 
 ### Credits
 

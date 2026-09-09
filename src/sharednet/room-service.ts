@@ -21,11 +21,16 @@ import { respondToMessage } from "./responder.js";
  *   expired looks identical, from the room, to one that never worked.
  * - **Idempotency.** The reply to a given message always carries the same key,
  *   so a retry after a failed post cannot deliver a second copy of a receipt.
- * - **A hard stop on runaway replies.** A self-answering loop is the failure
- *   this design is most exposed to, and in a market round it would fill the
- *   room and spend other agents' credits. Two guards: a message is answered at
- *   most once, and a burst beyond `maxRepliesPerWindow` stops the service
- *   rather than trusting that the next reply will be the last.
+ * - **Runaway replies, without a self-inflicted outage.** A self-answering loop
+ *   is the failure this design is most exposed to. But the Arena is explicit
+ *   that once it opens "humans don't touch the keyboard", so a guard that
+ *   stops the service is its own failure mode: a dozen malformed calls inside
+ *   a minute is an ordinary market, and going quiet for the rest of the round
+ *   costs every sale after it. So the rate guard *pauses* — the call is
+ *   answered late, not dropped — and only an absolute ceiling across the whole
+ *   run stops the service, at a number no real market reaches when each
+ *   verification takes tens of seconds. A message is still answered at most
+ *   once.
  */
 
 export interface RoomServiceOptions {
@@ -39,8 +44,11 @@ export interface RoomServiceOptions {
   /** Overridden by tests; production uses the API's own ceiling. */
   readonly waitSeconds?: number;
   /** Replies allowed inside one window before the service stops. Default 12. */
+  /** Replies per window before the loop pauses for the rest of it. Default 30. */
   readonly maxRepliesPerWindow?: number;
   readonly replyWindowMs?: number;
+  /** Replies in one run before the service stops for good. Default 400. */
+  readonly maxRepliesPerRun?: number;
   /** Pause after an empty poll. Guards against a server that never blocks. */
   readonly idleDelayMs?: number;
   /**
@@ -55,8 +63,16 @@ export interface RoomServiceOptions {
 }
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
-const DEFAULT_MAX_REPLIES_PER_WINDOW = 12;
+const DEFAULT_MAX_REPLIES_PER_WINDOW = 30;
 const DEFAULT_REPLY_WINDOW_MS = 60_000;
+/**
+ * The point past which this is not a busy market.
+ *
+ * A real receipt takes tens of seconds and the loop answers one call at a
+ * time, so a two-hour round cannot approach this. A loop of failures reaches
+ * it in minutes.
+ */
+const DEFAULT_MAX_REPLIES_PER_RUN = 400;
 const DEFAULT_IDLE_DELAY_MS = 500;
 
 /**
@@ -87,8 +103,10 @@ export async function runRoomService(options: RoomServiceOptions): Promise<void>
   const answered = new Set<string>();
   const maxReplies = options.maxRepliesPerWindow ?? DEFAULT_MAX_REPLIES_PER_WINDOW;
   const windowMs = options.replyWindowMs ?? DEFAULT_REPLY_WINDOW_MS;
+  const maxRepliesPerRun = options.maxRepliesPerRun ?? DEFAULT_MAX_REPLIES_PER_RUN;
   let windowStarted = Date.now();
   let repliesInWindow = 0;
+  let repliesTotal = 0;
 
   logger.info("sharednet room service started", { roomId, startingAfterSequence: cursor });
 
@@ -144,21 +162,35 @@ export async function runRoomService(options: RoomServiceOptions): Promise<void>
 
       if (reply === undefined) continue;
 
-      const now = Date.now();
-      if (now - windowStarted >= windowMs) {
-        windowStarted = now;
+      if (repliesTotal >= maxRepliesPerRun) {
+        // Far past anything a market does. Whatever this is, it is not selling.
+        logger.error("sharednet reply ceiling reached; stopping", {
+          roomId,
+          maxRepliesPerRun,
+          repliesTotal,
+        });
+        return;
+      }
+
+      if (Date.now() - windowStarted >= windowMs) {
+        windowStarted = Date.now();
         repliesInWindow = 0;
       }
       if (repliesInWindow >= maxReplies) {
-        // Something is generating calls faster than any real market would.
-        // Stopping is the safe failure: a silent service costs us a sale, a
-        // looping one costs the room.
-        logger.error("sharednet reply burst limit reached; stopping", {
+        // Slow down rather than shut down: the caller waits, and the next
+        // window sells again. Going quiet for the rest of a round would cost
+        // more than the burst it was meant to contain.
+        const remaining = Math.max(0, windowMs - (Date.now() - windowStarted));
+        logger.warn("sharednet reply rate limit reached; pausing", {
           roomId,
           maxReplies,
           windowMs,
+          pauseMs: remaining,
         });
-        return;
+        await yieldToEventLoop(remaining);
+        if (stopped()) return;
+        windowStarted = Date.now();
+        repliesInWindow = 0;
       }
 
       const key = replyKeys.get(message.id) ?? randomUUID();
@@ -169,6 +201,7 @@ export async function runRoomService(options: RoomServiceOptions): Promise<void>
         replyKeys.delete(message.id);
         answered.add(message.id);
         repliesInWindow += 1;
+        repliesTotal += 1;
       } catch (error) {
         // Keep the key: the retry posts the same reply, not a second receipt.
         logger.warn("sharednet reply not posted", { messageId: message.id, error: String(error) });
