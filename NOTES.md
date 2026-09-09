@@ -1,6 +1,7 @@
 # NOTES.md — Verified SharedOS facts and deviations from the implementation brief
 
-Everything here was verified against the real SDK (`@aicoo/sharedos@0.1.0-alpha.4`,
+Everything here was verified against the real SDK (`@aicoo/sharedos@0.1.0-alpha.5`
+since 2026-09-09, `0.1.0-alpha.4` before that — see §13,
 inspected at runtime and from source at <https://github.com/Aicoo-Team/SharedOS>).
 Where this file and the brief disagree, **this file is right** — the brief was
 written ahead of inspection and explicitly says to defer to the installed
@@ -23,11 +24,13 @@ Consequences are handled in §5 below rather than by inventing APIs.
 
 - Meta-package `@aicoo/sharedos` re-exports `-contracts`, `-core`, `-http`,
   `-os`, `-runtime`, and `SharedOSClient` from `-client`.
-- npm dist-tags: `latest` = `0.1.0-alpha.2`, `next` = `0.1.0-alpha.4`.
-  Repo `main` is `0.1.0-alpha.4`.
-- **Pinned to `0.1.0-alpha.4` exactly** (no `^`), including
-  `@aicoo/sharedos-testkit@0.1.0-alpha.4`, so the SDK and the testkit cannot
-  skew. `latest` would have pinned an *older* build than the repo's `main`.
+- npm dist-tags as of 2026-09-09: `latest` = `next` = `0.1.0-alpha.5`, which is
+  also the version the organizers' own get-started page names. (On 2026-09-07
+  they were `latest` = `alpha.2`, `next` = `alpha.4`, which is why the pin was
+  written the way it was.)
+- **Pinned to `0.1.0-alpha.5` exactly** (no `^`), including
+  `@aicoo/sharedos-testkit@0.1.0-alpha.5`, so the SDK and the testkit cannot
+  skew.
 - Requires Node `>=20.11`, ESM-only, Zod `^3.24.1` (Zod 3, not 4).
 
 ## 3. Verified contract shapes
@@ -390,3 +393,42 @@ digests, the host-derived checks, and the real SharedOS execution and trace ids.
 
 Test-room damage: about seventy junk messages in a room named "Test", plus a
 handful of short-lived instances on the account. Nothing outside that room.
+
+## 13. Upgraded to `0.1.0-alpha.5` — 2026-09-09
+
+Re-reading sharedos.ai on the morning of the event turned up one thing that had
+changed overnight: the get-started page now says
+`npm install @aicoo/sharedos@0.1.0-alpha.5`, and alpha.5 is both `latest` and
+`next` on npm. We were on alpha.4.
+
+Taken, because the version the organizers tell entrants to install is the one a
+judge will read our code against, and because the release is real rather than a
+retag — the upstream repo shows a release branch behind it.
+
+What alpha.5 changes that touches us, from the published changelog:
+
+- **A turn's tool catalogue is resolved once per turn** and every call is
+  answered from it (`ContextToolProvider` is called once per turn, not once per
+  operation). Our verifier holds two tools for the life of a turn, so this is
+  free — and it makes the catalogue the receipt describes a firmer claim.
+- **`tool.invoked` carries `catalogHash`**, joining an invocation to the
+  catalogue its turn was served. Our audit derivation reads `tool.completed`
+  from the execution stream, so nothing breaks; this is available if we ever
+  want to show which catalogue a call was answered from.
+- **Every `AuditEvent` gains an `id`**, so identical records no longer
+  deduplicate away.
+- Runtimes now receive `RuntimeVisibleContext.reach`, and `ModelDriver` sends it
+  as a system message. We drive turns through our own `AgentTurnDriver`, so this
+  does not reach the verifier's prompt.
+
+Verified after the upgrade: 276 tests, typecheck clean, both offline demos
+(including the injection containment demo and its audit trail), the HTTP
+serve-check, and the eval selftest — all green with no code changes. The audit
+vocabulary this repo depends on (`turn.started.visibleTools`,
+`tool.completed`, `authorization.checked`, `tool.invoked`) is unchanged.
+
+Also confirmed on the same pass: SharedNet is still "not documented publicly
+yet" on that page, which is why §10 went to the npm package instead; and Cloud
+setup still routes to `/get-started#cloud-preview`, where event integration is
+described as configured "separately during onboarding" with a contact address.
+The tenant id and owner address are still organizer-side.

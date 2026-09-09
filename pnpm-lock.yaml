@@ -9,15 +9,15 @@ importers:
   .:
     dependencies:
       '@aicoo/sharedos':
-        specifier: 0.1.0-alpha.4
-        version: 0.1.0-alpha.4
+        specifier: 0.1.0-alpha.5
+        version: 0.1.0-alpha.5
       zod:
         specifier: ^3.24.1
         version: 3.25.76
     devDependencies:
       '@aicoo/sharedos-testkit':
-        specifier: 0.1.0-alpha.4
-        version: 0.1.0-alpha.4
+        specifier: 0.1.0-alpha.5
+        version: 0.1.0-alpha.5
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1
@@ -33,36 +33,36 @@ importers:
 
 packages:
 
-  '@aicoo/sharedos-client@0.1.0-alpha.4':
-    resolution: {integrity: sha512-/+6/aSPW1AyH1kF0CMwBwEZJpLEVgktoGC9LoiRJ1s8PfB3d9Qjd3G9099dBOOcSRPlbEg3IIDrD0aqf0TXqyQ==}
+  '@aicoo/sharedos-client@0.1.0-alpha.5':
+    resolution: {integrity: sha512-nNuYrXaAL71OmqhObJrbr0+vM9EQmHYL2gmcQSbjfZ9QFfqWYIAjZt34XgaEmKIDU2z+kWtvZHP/nf5MrUf6kA==}
     engines: {node: '>=20.11'}
 
-  '@aicoo/sharedos-contracts@0.1.0-alpha.4':
-    resolution: {integrity: sha512-bIIR2HpZnhDWQ0se7p3sCFvOGQiEi9yn46I5Emt7iKm7n74q6yPgvbbXEDURlvHomMBDkMYv/cDuGWin3KICSQ==}
+  '@aicoo/sharedos-contracts@0.1.0-alpha.5':
+    resolution: {integrity: sha512-3TF/1AdQ56WTxi/noARV7Zwsl6xgDHZdkgjX5yEFygfYARXilNUIy6X+FPtN2uFNHrAqdpJO6MHZJXrptqVd8A==}
     engines: {node: '>=20.11'}
 
-  '@aicoo/sharedos-core@0.1.0-alpha.4':
-    resolution: {integrity: sha512-MvThF4bUqcTlFTi1F6eOvnfFthXY9RI+xk0Iw+RnLbzKhcfxTzwfOA+7J26ImdFHm7eWtMPX7qvJf25sp/yc3A==}
+  '@aicoo/sharedos-core@0.1.0-alpha.5':
+    resolution: {integrity: sha512-GA9ElITloaj3wR+TyXfvROWX6+kvmpSBY4I8Lsm6SaWFbQoZcQvd4P0zqwldnXu9OL1Gy+3WaaWAA685oDH9ug==}
     engines: {node: '>=20.11'}
 
-  '@aicoo/sharedos-http@0.1.0-alpha.4':
-    resolution: {integrity: sha512-rBA51CAmLIGAf67Ox2Kdf6OoyebMLfPs8oAP9XcPGL+H04SOaemqWqhF6hjkNBZBOEMit3QWWcioiLgf/LxeNQ==}
+  '@aicoo/sharedos-http@0.1.0-alpha.5':
+    resolution: {integrity: sha512-EbsyDBdvUpu+Z3so/NGmOWakQkNQNSDMW129hcNr4rZzl6ZAiDFPCvpk/CR9mTqYkHHrPgRuWdqEYgE98cqang==}
     engines: {node: '>=20.11'}
 
-  '@aicoo/sharedos-os@0.1.0-alpha.4':
-    resolution: {integrity: sha512-ChbVcoVa2dqrfLsqGZvIQ3pH97OE4TMKLY/M7dsf9o2QESI+l9KvNv3tR/MZy/SpqfAjH5rAYqlG4KqmmRC2vQ==}
+  '@aicoo/sharedos-os@0.1.0-alpha.5':
+    resolution: {integrity: sha512-hibM/MWdOZsjgM0NfKqC6/M2cDNTaQAzOD0rS8I1Ir9D9+9eZ1ehHbDpMsa8sOIHMTcTEaMMdgfvoBrWqyEQbg==}
     engines: {node: '>=20.11'}
 
-  '@aicoo/sharedos-runtime@0.1.0-alpha.4':
-    resolution: {integrity: sha512-/hPLoPsWOBBfnLs/5Ihydc5qxH/nDTVEKFtdA3tZoPaZ8Di+/CRZNaH43ssXD0tdCkTI/+tQOZfHpTVZggg4NA==}
+  '@aicoo/sharedos-runtime@0.1.0-alpha.5':
+    resolution: {integrity: sha512-nLmnUe+IW3LGjs+3e4GuyaIJdYnNsX7KvLUt89k5gGiHlS8q4ZVB/VgUtlOxxKtIuYwu3fw2/DAugy29luPHEw==}
     engines: {node: '>=20.11'}
 
-  '@aicoo/sharedos-testkit@0.1.0-alpha.4':
-    resolution: {integrity: sha512-VOZwkg2YEMFkHyb0xzDN/lTT/GlGkOfHr8+1dv4vdGojMlc89Y+ANMX9XDz4Z5z91OINaOuVsvQfNV5fuCmN1Q==}
+  '@aicoo/sharedos-testkit@0.1.0-alpha.5':
+    resolution: {integrity: sha512-u8VVIBwUS03woW+nqdJdI2ffnHYCCw+K0XFB84Ni4ylly4IMjaQSEDxIuaSp7NiLO2qpd+92CJMMhKKaFh/ucA==}
     engines: {node: '>=20.11'}
 
-  '@aicoo/sharedos@0.1.0-alpha.4':
-    resolution: {integrity: sha512-puIN4F+Fz8y8YC5GYvH10Mkn+b2Dh9u6E67XuDQMHWZZtdwe0ulZ2Y09rgk0WDj/D6VYiA3XhD2DnTnqGI2CeQ==}
+  '@aicoo/sharedos@0.1.0-alpha.5':
+    resolution: {integrity: sha512-X2p49xC2DlsgeB8J5ujQMz+xiz3mf7fvKcrcfye92/G3KLfr7ReB4qA5LrzMOZVQixVMN05YCJzzrBivrXSU/Q==}
     engines: {node: '>=20.11'}
 
   '@esbuild/aix-ppc64@0.21.5':
@@ -744,48 +744,48 @@ packages:
 
 snapshots:
 
-  '@aicoo/sharedos-client@0.1.0-alpha.4':
+  '@aicoo/sharedos-client@0.1.0-alpha.5':
     dependencies:
-      '@aicoo/sharedos-contracts': 0.1.0-alpha.4
+      '@aicoo/sharedos-contracts': 0.1.0-alpha.5
 
-  '@aicoo/sharedos-contracts@0.1.0-alpha.4':
+  '@aicoo/sharedos-contracts@0.1.0-alpha.5':
     dependencies:
       zod: 3.25.76
 
-  '@aicoo/sharedos-core@0.1.0-alpha.4':
+  '@aicoo/sharedos-core@0.1.0-alpha.5':
     dependencies:
-      '@aicoo/sharedos-contracts': 0.1.0-alpha.4
+      '@aicoo/sharedos-contracts': 0.1.0-alpha.5
 
-  '@aicoo/sharedos-http@0.1.0-alpha.4':
+  '@aicoo/sharedos-http@0.1.0-alpha.5':
     dependencies:
-      '@aicoo/sharedos-contracts': 0.1.0-alpha.4
-      '@aicoo/sharedos-core': 0.1.0-alpha.4
-      '@aicoo/sharedos-runtime': 0.1.0-alpha.4
+      '@aicoo/sharedos-contracts': 0.1.0-alpha.5
+      '@aicoo/sharedos-core': 0.1.0-alpha.5
+      '@aicoo/sharedos-runtime': 0.1.0-alpha.5
 
-  '@aicoo/sharedos-os@0.1.0-alpha.4':
+  '@aicoo/sharedos-os@0.1.0-alpha.5':
     dependencies:
-      '@aicoo/sharedos-contracts': 0.1.0-alpha.4
-      '@aicoo/sharedos-core': 0.1.0-alpha.4
+      '@aicoo/sharedos-contracts': 0.1.0-alpha.5
+      '@aicoo/sharedos-core': 0.1.0-alpha.5
       zod: 3.25.76
 
-  '@aicoo/sharedos-runtime@0.1.0-alpha.4':
+  '@aicoo/sharedos-runtime@0.1.0-alpha.5':
     dependencies:
-      '@aicoo/sharedos-contracts': 0.1.0-alpha.4
-      '@aicoo/sharedos-core': 0.1.0-alpha.4
+      '@aicoo/sharedos-contracts': 0.1.0-alpha.5
+      '@aicoo/sharedos-core': 0.1.0-alpha.5
 
-  '@aicoo/sharedos-testkit@0.1.0-alpha.4':
+  '@aicoo/sharedos-testkit@0.1.0-alpha.5':
     dependencies:
-      '@aicoo/sharedos-contracts': 0.1.0-alpha.4
-      '@aicoo/sharedos-core': 0.1.0-alpha.4
+      '@aicoo/sharedos-contracts': 0.1.0-alpha.5
+      '@aicoo/sharedos-core': 0.1.0-alpha.5
 
-  '@aicoo/sharedos@0.1.0-alpha.4':
+  '@aicoo/sharedos@0.1.0-alpha.5':
     dependencies:
-      '@aicoo/sharedos-client': 0.1.0-alpha.4
-      '@aicoo/sharedos-contracts': 0.1.0-alpha.4
-      '@aicoo/sharedos-core': 0.1.0-alpha.4
-      '@aicoo/sharedos-http': 0.1.0-alpha.4
-      '@aicoo/sharedos-os': 0.1.0-alpha.4
-      '@aicoo/sharedos-runtime': 0.1.0-alpha.4
+      '@aicoo/sharedos-client': 0.1.0-alpha.5
+      '@aicoo/sharedos-contracts': 0.1.0-alpha.5
+      '@aicoo/sharedos-core': 0.1.0-alpha.5
+      '@aicoo/sharedos-http': 0.1.0-alpha.5
+      '@aicoo/sharedos-os': 0.1.0-alpha.5
+      '@aicoo/sharedos-runtime': 0.1.0-alpha.5
 
   '@esbuild/aix-ppc64@0.21.5':
     optional: true
