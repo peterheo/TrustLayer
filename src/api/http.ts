@@ -9,8 +9,14 @@ import {
 } from "../arena/adapter.js";
 import { config } from "../config.js";
 import { logger } from "../logging.js";
-import { TRUSTLAYER_NAMESPACE_ID, TRUST_VERIFY_PURPOSE } from "../sharedos/identity.js";
-import type { VerifyOptions } from "./verify.js";
+import {
+  TRUSTLAYER_NAMESPACE_ID,
+  TRUST_VERIFY_PURPOSE,
+  VERIFIER_AGENT,
+} from "../sharedos/identity.js";
+import { createVerificationContext, newTurnIdentifiers } from "../sharedos/context.js";
+import type { TrustLayerHost } from "../sharedos/kernel.js";
+import { defaultHost, type VerifyOptions } from "./verify.js";
 
 /**
  * The callable surface: what another agent talks to.
@@ -85,6 +91,42 @@ export function readiness(): Readiness {
   };
 }
 
+/**
+ * The verifier's authority, as the kernel computes it.
+ *
+ * Every other claim this service makes about least privilege is prose. This
+ * one is not: `kernel.reach` derives the answer from the grants themselves at
+ * the moment it is asked, and the SDK is explicit that it is never stored —
+ * a cached reach would keep advertising a revoked grant. So a caller deciding
+ * whether to trust TrustLayer with their agent's output does not have to take
+ * our word for what it can do; they can read it, and what is absent from the
+ * list is absent from the service.
+ *
+ * Reading it consumes no authority and starts no turn.
+ */
+export async function authority(host: TrustLayerHost): Promise<Record<string, unknown>> {
+  const { traceId } = newTurnIdentifiers();
+  const context = createVerificationContext({ traceId });
+
+  const [reach, tools] = await Promise.all([
+    host.kernel.reach(context),
+    host.kernel.listTools(context),
+  ]);
+
+  return {
+    purpose: TRUST_VERIFY_PURPOSE,
+    tenant: TRUSTLAYER_NAMESPACE_ID,
+    actor: VERIFIER_AGENT,
+    // The effective catalogue for this context: what the verifier could call,
+    // after grants and namespace enablement have both been applied.
+    tools: tools.map((tool) => tool.name),
+    reach,
+    note:
+      "Computed by the SharedOS kernel from the grants themselves, not asserted by " +
+      "this service. Anything absent here is authority the verifier does not hold.",
+  };
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(`${JSON.stringify(body)}\n`, {
     status,
@@ -150,6 +192,11 @@ export function createHttpService(options: HttpServiceOptions = {}) {
     if (path === "/health/ready" && request.method === "GET") {
       const state = readiness();
       return json({ ready: state.ready, blockers: state.blockers }, state.ready ? 200 : 503);
+    }
+
+    // The least-privilege claim, checkable rather than advertised.
+    if (path === "/v1/authority" && request.method === "GET") {
+      return json(await authority(options.verifyOptions?.host ?? defaultHost()));
     }
 
     // Discovery: what the services are, what they cost, what they return.

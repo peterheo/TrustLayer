@@ -452,3 +452,32 @@ remainder of the window and carries on (the caller waits; the call is answered
 late rather than dropped), and only an absolute ceiling across the whole run —
 400 replies, which a sequential service answering real calls cannot approach —
 stops it for good. A loop of failures still hits that in minutes.
+
+## 15. Reading the reference: `kernel.reach` — 2026-09-10
+
+The generated reference at <https://sharedos.ai/reference> lists the eleven
+public packages and little else about Cloud: "Cloud services are in
+design-partner preview", setup routes to `/get-started#cloud-preview`, contact
+`hi@sharedos.ai`. No decision-event contract, no tenant management, no host
+registration. So the Cloud gap is still onboarding, not documentation we
+missed.
+
+The installed alpha.5 packages are the better reference, and they carry
+something we were not using: **`SharedOSKernel.reach(context)`**, added in
+alpha.4 and exposed over HTTP as `GET /v1/reach`. It answers "namespace, path,
+actions and scope from the grants" for a context, consuming no authority and
+starting no turn. The SDK is explicit that it is never stored — "a stored reach
+would keep advertising a revoked grant".
+
+That is the one claim in this product a caller should not have to take on
+trust, so it is now published at `GET /v1/authority`: the purpose, the actor,
+the effective tool catalogue, and the kernel's own reach. On the running
+service that is three entries — `research/web` fetch (descendants),
+`research/web` search (exact), and `sharedos.execution` invoke on the verifier
+— and nothing else. Absence is the proof: a namespace missing from a
+kernel-computed reach is authority the verifier does not hold.
+
+This is deliberately *not* the raw SharedOS HTTP boundary (§9): `/v1/reach`
+there would sit beside `/v1/turns` and `/v1/tools/invoke`, which would lend a
+caller the verifier's `research.fetch`. Reading authority grants nothing, so it
+needs no token; using it would, so it is not exposed.

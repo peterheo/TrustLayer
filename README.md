@@ -239,6 +239,23 @@ All three are constrained to `purposes: ["trust.verify"]`. There is no `files`
 grant, no `repo` grant, no messaging transport, and no escalation tool; the
 only enabled tool namespace is `research`.
 
+**You do not have to take that on trust.** `GET /v1/authority` asks the kernel
+and returns what it says:
+
+```json
+{ "tools": ["research.fetch", "research.search"],
+  "reach": { "status": "computed", "reach": [
+    { "namespace": "research", "path": ["web"], "actions": ["fetch"],  "scope": "descendants" },
+    { "namespace": "research", "path": ["web"], "actions": ["search"], "scope": "exact" },
+    { "namespace": "sharedos.execution", "path": ["agent", "trustlayer-verifier"],
+      "actions": ["invoke"], "scope": "exact" } ] } }
+```
+
+`kernel.reach` derives this from the grants at the moment it is asked and the
+SDK never stores it — a cached reach would keep advertising a revoked grant. So
+what is absent from that list is authority the verifier does not hold, and the
+endpoint needs no token because it grants nothing.
+
 **The prompt-injection story.** The fixture asks the verifier to read
 `~/.ssh/id_rsa`, email it to an attacker, and misreport a price. `pnpm
 demo:injection` runs that fixture with a model scripted to *obey it* — the
@@ -289,7 +306,7 @@ body runs.
 ## Tests
 
 ```
-pnpm test        # 280 tests
+pnpm test        # 283 tests
 pnpm typecheck
 ```
 
@@ -398,6 +415,7 @@ docker build -t trustlayer .    # or the image
 | `GET /health` | liveness, method version, tenant, service names, and whether the verifier can answer a call |
 | `GET /health/ready` | readiness: 200 when it can serve, 503 naming each blocker when it cannot |
 | `GET /v1/services` | the descriptors: name, price, input, output, guarantees |
+| `GET /v1/authority` | what the verifier may do, **computed by the SharedOS kernel** from its grants — not asserted by us |
 | `POST /v1/trust.verify` | `task` + `candidate_output` (+ `focus_claims`, `source_urls`) → receipt |
 | `POST /v1/trust.check` | one claim → the same receipt |
 

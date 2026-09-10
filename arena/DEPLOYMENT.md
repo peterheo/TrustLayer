@@ -109,6 +109,7 @@ which is the failure you will see if they drift apart.
 GET  /health              liveness: method version, tenant, service names, and
                           whether the verifier can actually answer a call
 GET  /health/ready        readiness: 200 when it can serve, 503 with the reasons when it cannot
+GET  /v1/authority        what the verifier may do, computed by the kernel from its grants
 GET  /v1/services         the descriptors: name, price, input, output, guarantees
 POST /v1/trust.verify     task + candidate_output (+ focus_claims, source_urls) -> receipt
 POST /v1/trust.check      one claim -> the same receipt

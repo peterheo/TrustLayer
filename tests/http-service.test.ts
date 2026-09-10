@@ -117,6 +117,52 @@ describe("http service", () => {
     expect(JSON.stringify(payload)).not.toMatch(/trust[_ ]?score/i);
   });
 
+  /**
+   * The one claim in this product that a caller should not have to take on
+   * trust. `kernel.reach` derives it from the grants when asked, and the SDK
+   * never stores it — so a revoked grant stops advertising itself.
+   */
+  describe("authority", () => {
+    it("publishes exactly the three capabilities the verifier holds", async () => {
+      const handle = createHttpService({ verifyOptions: verifyOptions() });
+      const response = await handle(new Request("http://trustlayer.test/v1/authority"));
+
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as {
+        purpose: string;
+        tools: string[];
+        reach: { status: string; reach: { namespace: string; actions: string[] }[] };
+      };
+
+      expect(payload.purpose).toBe("trust.verify");
+      expect([...payload.tools].sort()).toEqual(["research.fetch", "research.search"]);
+      expect(payload.reach.status).toBe("computed");
+
+      const namespaces = payload.reach.reach.map((entry) => entry.namespace).sort();
+      expect(namespaces).toEqual(["research", "research", "sharedos.execution"]);
+    });
+
+    it("shows the absence of everything the verifier is not granted", async () => {
+      const handle = createHttpService({ verifyOptions: verifyOptions() });
+      const body = await (
+        await handle(new Request("http://trustlayer.test/v1/authority"))
+      ).text();
+
+      // Absence is the proof: a namespace missing from a kernel-computed reach
+      // is authority the service does not hold.
+      for (const namespace of ["files", "messages", "repo", "calendar", "sharedos.escalate"]) {
+        expect(body).not.toContain(`"${namespace}"`);
+      }
+    });
+
+    it("needs no token, because it grants nothing", async () => {
+      const handle = createHttpService({ token: "secret", verifyOptions: verifyOptions() });
+      const response = await handle(new Request("http://trustlayer.test/v1/authority"));
+
+      expect(response.status).toBe(200);
+    });
+  });
+
   it("returns an evidence receipt for a verify call", async () => {
     stubPages();
     const handle = createHttpService({ verifyOptions: verifyOptions() });
