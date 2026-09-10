@@ -137,6 +137,7 @@ export async function verify(
     // RECEIPT.
     protocol.enter("receipt");
     const receipt = buildReceipt({
+      request,
       plan,
       claims,
       validation: report,

@@ -1,13 +1,16 @@
 import type { ExecutionResult } from "@aicoo/sharedos";
 
 import { TRUST_VERIFY_PURPOSE } from "../sharedos/identity.js";
-import { toolsUsedFrom } from "../sharedos/audit.js";
+import { refusedCallsFrom, toolsUsedFrom } from "../sharedos/audit.js";
 import type { ProtocolState } from "../verifier/protocol.js";
-import { newReportId } from "./digest.js";
+import { canonicalSha256, canonicalUrl, newReportId, sha256 } from "./digest.js";
 import type { EvidenceLedger } from "./ledger.js";
 import {
   METHOD_VERSION,
   type EvidenceReceipt,
+  type ReceiptCounts,
+  type ReceiptInput,
+  type VerifyRequest,
   type OverallStatus,
   type PlannedClaim,
   type ProtocolStatus,
@@ -121,6 +124,50 @@ export function deriveChecks(
   };
 }
 
+/** Arithmetic over the validated table, so the shape of the answer is readable. */
+export function deriveCounts(claims: readonly ReceiptClaim[]): ReceiptCounts {
+  const of = (status: string): number => claims.filter((claim) => claim.status === status).length;
+  return {
+    supported: of("supported"),
+    contradicted: of("contradicted"),
+    unverified: of("unverified"),
+    notFalsifiable: of("not_falsifiable"),
+  };
+}
+
+/**
+ * Retrievals that were not a new source.
+ *
+ * Counted two ways, because a source can repeat under either: the same
+ * canonical URL fetched twice, and two different URLs that returned
+ * byte-identical text — a mirror, a syndication, or the same page behind a
+ * redirect. Either way it is one source, and a claim resting on "two" of them
+ * is resting on one.
+ */
+export function countDuplicateSources(ledger: EvidenceLedger): number {
+  const seenUrls = new Set<string>();
+  const seenDigests = new Set<string>();
+  let duplicates = 0;
+
+  for (const record of ledger.listEvidence()) {
+    const url = canonicalUrl(record.resolvedUrl);
+    const repeated = seenUrls.has(url) || seenDigests.has(record.contentSha256);
+    if (repeated) duplicates += 1;
+    seenUrls.add(url);
+    seenDigests.add(record.contentSha256);
+  }
+
+  return duplicates;
+}
+
+/** What was submitted, pinned so a receipt cannot be re-pointed at other input. */
+export function deriveInput(request: VerifyRequest): ReceiptInput {
+  return {
+    candidateOutputSha256: sha256(request.candidateOutput),
+    requestSha256: canonicalSha256(request),
+  };
+}
+
 export function deriveCoverage(
   plan: readonly PlannedClaim[],
   claims: readonly ReceiptClaim[],
@@ -140,6 +187,7 @@ export function deriveCoverage(
     searchCandidates: ledger.candidateCount,
     sourcesFetched: ledger.evidenceCount,
     distinctDomains: ledger.distinctDomains(),
+    duplicateSources: countDuplicateSources(ledger),
   };
 }
 
@@ -194,6 +242,8 @@ export function deriveSecurity(
 }
 
 export interface BuildReceiptInput {
+  /** The validated request, so the receipt can pin what was submitted. */
+  readonly request: VerifyRequest;
   readonly plan: readonly PlannedClaim[];
   readonly claims: readonly ReceiptClaim[];
   readonly validation: ValidationReport;
@@ -215,12 +265,14 @@ export function buildReceipt(input: BuildReceiptInput): EvidenceReceipt {
   const started = Date.parse(execution.startedAt);
   const completed = Date.parse(execution.completedAt);
 
-  return {
+  const receipt: Omit<EvidenceReceipt, "receiptSha256"> = {
     reportId: newReportId(),
     methodVersion: METHOD_VERSION,
+    input: deriveInput(input.request),
     protocolStatus,
     overallStatus: deriveOverallStatus(claims),
     summary: input.summary,
+    counts: deriveCounts(claims),
     claims,
     evidence: evidenceForReceipt(ledger),
     coverage: deriveCoverage(plan, claims, ledger),
@@ -237,6 +289,7 @@ export function buildReceipt(input: BuildReceiptInput): EvidenceReceipt {
       traceId: execution.traceId,
       sharedosStatus: execution.status,
       toolsUsed: toolsUsedFrom(execution.events),
+      permissionDenials: refusedCallsFrom(execution.events).length,
       startedAt: execution.startedAt,
       completedAt: execution.completedAt,
       durationMs:
@@ -244,4 +297,18 @@ export function buildReceipt(input: BuildReceiptInput): EvidenceReceipt {
     },
     ...(protocol.failures.length > 0 ? { incompletePhases: [...protocol.failures] } : {}),
   };
+
+  // Computed last, over everything above it.
+  return { ...receipt, receiptSha256: canonicalSha256(receipt) };
+}
+
+/**
+ * Recompute a receipt's digest and compare.
+ *
+ * Exported because a claim a holder cannot check is worth little: this is the
+ * same arithmetic the issuer did, over the same canonical bytes.
+ */
+export function verifyReceiptDigest(receipt: EvidenceReceipt): boolean {
+  const { receiptSha256, ...rest } = receipt;
+  return canonicalSha256(rest) === receiptSha256;
 }

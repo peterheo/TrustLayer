@@ -481,3 +481,58 @@ This is deliberately *not* the raw SharedOS HTTP boundary (§9): `/v1/reach`
 there would sit beside `/v1/turns` and `/v1/tools/invoke`, which would lend a
 caller the verifier's `research.fetch`. Reading authority grants nothing, so it
 needs no token; using it would, so it is not exposed.
+
+## 16. Reviewing the TrustedLayer architecture spec — 2026-09-10
+
+A new spec arrived: *TrustedLayer — Evidence, not confidence*, targeting the
+**Nebius × NVIDIA Global AI Hackathon** with Nebius Token Factory and NVIDIA
+Nemotron. That is a different event from the SharedOS Arena this repository has
+been built for, and a materially different system. Recorded here so the
+divergence is not discovered again from scratch.
+
+**Where it agrees with what exists** — the thesis (an evidence receipt, never a
+trust score), SharedOS as the authorization boundary with the host owning
+orchestration, authority never arriving through a prompt, a least-privilege
+tool surface, Tavily as a search backend (already implemented), snippets never
+counting as fetched evidence, denials recorded, a deterministic validator that
+rejects fabricated evidence ids, and its list of things not to build.
+
+**What it asks for that does not exist here:**
+
+1. five distinct SharedOS agent identities — planner, researcher A, researcher
+   B, skeptic, adjudicator — each with its own grants (§5–§7). We run one
+   verifier agent through phases.
+2. the **evidence barrier** (§11): researchers cannot read one another until a
+   reveal, enforced at the authorization layer rather than by convention. The
+   most SharedOS-native idea in the document.
+3. Nebius Token Factory and Nemotron routing (§13), which its own acceptance
+   tests require. We have an Anthropic client and a scripted one.
+4. an asynchronous session API with events and a stream (§22); ours is one
+   request, one receipt.
+5. a web UI and a live verification view (§17–§18) — an explicit *non-goal* in
+   the v2 spec this repo was built to.
+6. an MCP catalog exposing `trustedlayer.verify/status/receipt` (§19).
+7. session evidence storage with immutability after lock (§9) — the v2 spec
+   deliberately kept the ledger per-turn and in memory.
+8. the verdict vocabulary `QUALIFIED` / `UNVERIFIABLE` / `INSUFFICIENT`.
+9. SharedNet behind an `AgentNetwork` interface with a local adapter first
+   (§20); we integrated SharedNet directly, against its real API.
+
+Items 5 and 7 contradict the spec this repo was built to, so they are a
+decision, not a gap.
+
+**What was taken now,** because it is right under either target and cheap:
+`input` (the submitted output and whole request, by digest), `counts`,
+`coverage.duplicateSources`, `provenance.permissionDenials`, and
+`receiptSha256` over a canonical (key-sorted) form with `verifyReceiptDigest`
+to check it. The digest is not a signature and is not offered as one — anyone
+can recompute it — but it tells a holder whether the receipt they were handed
+is the one that was issued.
+
+Two of these earned their keep immediately: the happy-path fixture fetches the
+same page twice, which the receipt now reports as `duplicateSources: 1`; and
+the injection demo reports `permissionDenials: 2`, so the containment
+boundary appears in the customer artifact rather than only in a demo script.
+
+`methodVersion` stays `trustlayer-evidence-v1`: these fields add reporting,
+they do not change how anything is verified.

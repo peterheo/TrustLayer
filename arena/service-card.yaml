@@ -150,12 +150,25 @@ output:
       requested URL, resolved URL after redirects, domain, title, retrieval
       timestamp, SHA-256 of the exact text the verifier read, and whether it
       was found independently or supplied by the candidate.
+  input:
+    type: object
+    description: SHA-256 of the exact output submitted, and of the whole request.
+  counts:
+    type: object
+    description: How many claims came out supported, contradicted, unverified or not falsifiable.
+  receipt_sha256:
+    type: string
+    description: >
+      Digest over the whole receipt, canonicalised so anyone can recompute it.
+      Not a signature: it tells a holder the receipt is the one that was
+      issued, not who issued it.
   coverage:
     type: object
     description: >
       claims_selected, claims_checked, critical_claims_total,
       critical_claims_checked, search_candidates, sources_fetched,
-      distinct_domains.
+      distinct_domains, and duplicate_sources — retrievals that were not a new
+      source, so "two sources" that are really one is visible.
   checks:
     type: object
     description: >
@@ -175,7 +188,8 @@ output:
     type: object
     description: >
       SharedOS purpose, execution ID, trace ID, execution status, the research
-      tools actually invoked, and the turn's timings. Read off the SharedOS
+      tools actually invoked, how many tool calls SharedOS refused, and the
+      turn's timings. Read off the SharedOS
       execution record, never from model output.
 
 guarantees:

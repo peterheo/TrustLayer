@@ -266,6 +266,27 @@ export interface ReceiptEvidence {
   readonly origin: EvidenceOrigin;
 }
 
+/**
+ * How the claims came out, counted.
+ *
+ * The prose summary is the model's; this is arithmetic over the validated
+ * table, so a reader can see the shape of the answer without parsing it.
+ */
+export interface ReceiptCounts {
+  readonly supported: number;
+  readonly contradicted: number;
+  readonly unverified: number;
+  readonly notFalsifiable: number;
+}
+
+/** What was submitted, pinned by digest. */
+export interface ReceiptInput {
+  /** SHA-256 of the exact output under verification. */
+  readonly candidateOutputSha256: string;
+  /** SHA-256 of the whole validated request, canonicalised. */
+  readonly requestSha256: string;
+}
+
 export interface ReceiptCoverage {
   readonly claimsSelected: number;
   readonly claimsChecked: number;
@@ -274,6 +295,15 @@ export interface ReceiptCoverage {
   readonly searchCandidates: number;
   readonly sourcesFetched: number;
   readonly distinctDomains: number;
+  /**
+   * Retrievals that were not a new source.
+   *
+   * The same page fetched twice, or two URLs that returned byte-identical
+   * text, is one source however many evidence ids it holds — and a claim
+   * "backed by two sources" that is really one is exactly the overstatement
+   * this product exists to catch.
+   */
+  readonly duplicateSources: number;
 }
 
 /** Host-derived facts about what the protocol actually did. Never model-authored. */
@@ -300,6 +330,14 @@ export interface ReceiptProvenance {
   readonly traceId: string;
   readonly sharedosStatus: string;
   readonly toolsUsed: readonly string[];
+  /**
+   * Tool calls SharedOS refused during this turn.
+   *
+   * Normally zero. A non-zero count is the containment boundary doing its job
+   * and belongs in the receipt: a caller should be able to see that something
+   * reached for authority it did not have.
+   */
+  readonly permissionDenials: number;
   readonly startedAt: string;
   readonly completedAt: string;
   readonly durationMs: number;
@@ -317,9 +355,12 @@ export interface ReceiptProvenance {
 export interface EvidenceReceipt {
   readonly reportId: string;
   readonly methodVersion: string;
+  /** What was submitted, by digest. */
+  readonly input: ReceiptInput;
   readonly protocolStatus: ProtocolStatus;
   readonly overallStatus: OverallStatus;
   readonly summary: string;
+  readonly counts: ReceiptCounts;
   readonly claims: readonly ReceiptClaim[];
   readonly evidence: readonly ReceiptEvidence[];
   readonly coverage: ReceiptCoverage;
@@ -328,4 +369,13 @@ export interface EvidenceReceipt {
   readonly provenance: ReceiptProvenance;
   /** Phases that could not complete, when `protocolStatus` is not `complete`. */
   readonly incompletePhases?: readonly string[];
+  /**
+   * SHA-256 over every other field, canonicalised.
+   *
+   * Not a signature and not offered as one: anyone can recompute it, so it
+   * proves nothing about who issued the receipt. What it does is let a holder
+   * check that the receipt they are reading is the one that was issued, and
+   * give two parties a short string to compare when they disagree.
+   */
+  readonly receiptSha256: string;
 }

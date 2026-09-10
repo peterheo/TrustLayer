@@ -79,3 +79,29 @@ export function canonicalUrl(raw: string): string {
 
   return `${parsed.protocol.toLowerCase()}//${host}${port}${normalizedPath}${parsed.search}`;
 }
+
+/**
+ * JSON with every object key sorted, at every depth.
+ *
+ * A digest is only checkable by someone else if they can rebuild the exact
+ * bytes it covers. `JSON.stringify` preserves insertion order, which makes a
+ * hash depend on the order this code happened to build an object in — fine
+ * until a refactor moves a field and every previously issued receipt stops
+ * verifying. Sorting removes that dependency.
+ */
+export function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`);
+
+  return `{${entries.join(",")}}`;
+}
+
+/** SHA-256 over the canonical form of a value. */
+export function canonicalSha256(value: unknown): string {
+  return sha256(canonicalJson(value));
+}

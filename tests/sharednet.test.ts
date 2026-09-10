@@ -111,6 +111,9 @@ describe("sharednet call protocol", () => {
       return {
         reportId: "rpt_1",
         methodVersion: "trustlayer-evidence-v1",
+        input: { candidateOutputSha256: "a".repeat(64), requestSha256: "b".repeat(64) },
+        counts: { supported: 1, contradicted: 0, unverified: 0, notFalsifiable: 0 },
+        receiptSha256: "c".repeat(64),
         protocolStatus: "complete",
         overallStatus: "supported",
         summary: "The price claim holds.",
@@ -145,6 +148,7 @@ describe("sharednet call protocol", () => {
           searchCandidates: 3,
           sourcesFetched: 1,
           distinctDomains: 1,
+          duplicateSources: 0,
         },
         checks: {
           independentSearchPerformed: true,
@@ -162,6 +166,7 @@ describe("sharednet call protocol", () => {
           traceId: "trace-1",
           sharedosStatus: "succeeded",
           toolsUsed: ["research.search", "research.fetch"],
+          permissionDenials: 0,
           startedAt: "2026-09-08T00:00:00.000Z",
           completedAt: "2026-09-08T00:00:01.000Z",
           durationMs: 1_000,

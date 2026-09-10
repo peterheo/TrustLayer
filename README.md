@@ -185,9 +185,11 @@ Everything the receipt presents as fact is produced elsewhere:
 {
   "reportId": "rpt_…",
   "methodVersion": "trustlayer-evidence-v1",
+  "input": { "candidateOutputSha256": "…", "requestSha256": "…" },   // what was submitted, pinned
   "protocolStatus": "complete",          // complete | partial | failed
   "overallStatus": "supported",          // supported | mixed | contradicted | unverified
   "summary": "…",                        // the model's prose, and nothing else from it
+  "counts": { "supported": 1, "contradicted": 0, "unverified": 0, "notFalsifiable": 0 },
   "claims": [{
     "claimId": "k1", "claim": "Widget X costs $79.",
     "importance": "critical", "status": "supported", "confidence": 0.9,
@@ -208,7 +210,7 @@ Everything the receipt presents as fact is produced elsewhere:
   }],
   "coverage": { "claimsSelected": 1, "claimsChecked": 1, "criticalClaimsTotal": 1,
                 "criticalClaimsChecked": 1, "searchCandidates": 4,
-                "sourcesFetched": 1, "distinctDomains": 1 },
+                "sourcesFetched": 1, "distinctDomains": 1, "duplicateSources": 0 },
   "checks":   { "independentSearchPerformed": true, "sourcesFetched": true,
                 "candidateCitationsChecked": true, "contradictionSearchPerformed": true,
                 "contradictionSearchProducedCandidates": true,
@@ -218,12 +220,26 @@ Everything the receipt presents as fact is produced elsewhere:
   "provenance": { "purpose": "trust.verify", "executionId": "…", "traceId": "…",
                   "sharedosStatus": "succeeded",
                   "toolsUsed": ["research.search", "research.fetch"],
-                  "startedAt": "…", "completedAt": "…", "durationMs": 74 }
+                  "permissionDenials": 0,          // tool calls SharedOS refused
+                  "startedAt": "…", "completedAt": "…", "durationMs": 74 },
+  "receiptSha256": "…"                   // over every field above, canonicalised
 }
 ```
 
 `methodVersion` names the verification procedure, not the package release. It
 changes only when verification semantics materially change.
+
+A receipt is portable — it gets forwarded, quoted and argued over by people who
+were not there when it was issued — so it carries what it needs to survive the
+trip. `input` pins the exact output that was checked. `duplicateSources` counts
+retrievals that were not a new source (the same page twice, or two URLs
+returning byte-identical text), because a claim resting on "two sources" that
+are one is the overstatement this product exists to catch.
+`provenance.permissionDenials` counts tool calls SharedOS refused — the
+injection demo reports `2`. And `receiptSha256` is a digest anyone can
+recompute over the canonical form (`verifyReceiptDigest`); it is not a
+signature and is not offered as one, but it does tell a holder whether the
+receipt they are reading is the one that was issued.
 
 ## Security
 
@@ -306,7 +322,7 @@ body runs.
 ## Tests
 
 ```
-pnpm test        # 283 tests
+pnpm test        # 294 tests
 pnpm typecheck
 ```
 
@@ -315,6 +331,7 @@ pnpm typecheck
 | `integration.test.ts` | end-to-end receipt, provenance derivation, denial and model-failure handling |
 | `verification-behaviour.test.ts` | supported / contradicted / unverified / mixed / not-falsifiable, stale facts, conflicting sources, focus claims |
 | `evidence-ledger.test.ts` | candidates are not evidence, host-minted provenance, candidate-citation origin, per-execution isolation |
+| `receipt-integrity.test.ts` | canonical digests, tamper detection, duplicate-source counting, denial counts |
 | `receipt-validator.test.ts` | fabricated IDs discarded, downgrades, wrong-relation citations, unadjudicated claims |
 | `citation-validation.test.ts` | caller-supplied sources labelled and chased by the host, dead citations, the fetch cap, `candidateCitationsChecked` |
 | `protocol.test.ts` | phase accounting, challenge search vs challenge retrieval, `protocolStatus`, `overallStatus`, checks a model's summary cannot influence |

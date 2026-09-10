@@ -151,6 +151,7 @@ if (outcome.ok) {
   console.log("  protocol status:    ", receipt.protocolStatus);
   console.log("  overall status:     ", receipt.overallStatus);
   console.log("  toolsUsed (audited):", receipt.provenance.toolsUsed);
+  console.log("  denied by SharedOS: ", receipt.provenance.permissionDenials);
   console.log("  suspicious content: ", receipt.security.suspiciousInstructionsDetected);
   console.log("\n  indicators:");
   for (const indicator of receipt.security.indicators) console.log(`    - ${indicator}`);
