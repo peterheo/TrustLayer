@@ -289,7 +289,7 @@ body runs.
 ## Tests
 
 ```
-pnpm test        # 277 tests
+pnpm test        # 280 tests
 pnpm typecheck
 ```
 
@@ -395,7 +395,8 @@ docker build -t trustlayer .    # or the image
 
 | Route | |
 | --- | --- |
-| `GET /health` | liveness, method version, tenant, service names |
+| `GET /health` | liveness, method version, tenant, service names, and whether the verifier can answer a call |
+| `GET /health/ready` | readiness: 200 when it can serve, 503 naming each blocker when it cannot |
 | `GET /v1/services` | the descriptors: name, price, input, output, guarantees |
 | `POST /v1/trust.verify` | `task` + `candidate_output` (+ `focus_claims`, `source_urls`) → receipt |
 | `POST /v1/trust.check` | one claim → the same receipt |

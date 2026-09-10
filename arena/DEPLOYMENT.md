@@ -61,6 +61,15 @@ services:              trust.verify (3 credits), trust.check (1 credit)
 
 ## 3. Deploying the service
 
+**What "on SharedOS" means here.** SharedOS is not a host: the kernel is a
+library that runs inside TrustLayer's own process — *"Your app runs the kernel.
+Cloud shows what it decided"* — and Cloud is a read-only decision console that
+your host pushes to, in design-partner preview. So there is nothing to upload
+to SharedOS. TrustLayer already *runs on* SharedOS: every verification is a
+real bounded turn under the purpose `trust.verify`, with the audit trail and
+the execution and trace ids in each receipt's `provenance`. Deploying means
+putting this process somewhere it stays up.
+
 TrustLayer is one stateless Node process. No database, no volume, no queue.
 
 ```bash
@@ -97,11 +106,27 @@ which is the failure you will see if they drift apart.
 ### The callable surface
 
 ```
-GET  /health              liveness, method version, tenant, service names
+GET  /health              liveness: method version, tenant, service names, and
+                          whether the verifier can actually answer a call
+GET  /health/ready        readiness: 200 when it can serve, 503 with the reasons when it cannot
 GET  /v1/services         the descriptors: name, price, input, output, guarantees
 POST /v1/trust.verify     task + candidate_output (+ focus_claims, source_urls) -> receipt
 POST /v1/trust.check      one claim -> the same receipt
 ```
+
+**Check `/health/ready` before the round opens.** A deployment with no model
+provider or no search backend starts, listens, and answers `/health` — and
+fails every call. That is the worst state to be in on a night when nobody may
+touch the keyboard, so readiness names each blocker instead of reporting `ok`:
+
+```json
+{ "ready": false,
+  "blockers": ["no model provider: set MODEL_PROVIDER=anthropic (with MODEL_NAME)",
+               "no search backend: set SEARCH_PROVIDER=brave|tavily and SEARCH_API_KEY, …"] }
+```
+
+The same list is logged at error level on startup. Liveness stays `200` on
+purpose: an unconfigured service should be visible, not restart-looped.
 
 ```bash
 curl -s "$BASE/v1/trust.verify" \

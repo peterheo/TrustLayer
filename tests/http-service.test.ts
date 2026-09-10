@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createHttpService } from "../src/api/http.js";
+import { createHttpService, readiness } from "../src/api/http.js";
 import { createTrustLayerHost } from "../src/sharedos/kernel.js";
 import { ScriptedVerifierModel } from "../src/verifier/model.js";
 import {
@@ -61,9 +61,46 @@ describe("http service", () => {
 
     expect(response.status).toBe(200);
     const payload = (await response.json()) as Record<string, unknown>;
-    expect(payload["status"]).toBe("ok");
     expect(payload["methodVersion"]).toBe("trustlayer-evidence-v1");
     expect(payload["services"]).toEqual(["trust.verify", "trust.check"]);
+  });
+
+  /**
+   * A deployment that reports `ok` while every call fails is the worst shape
+   * this can take on a night when nobody may touch the keyboard: monitored as
+   * alive, earning nothing. Readiness has to be able to say no.
+   */
+  describe("readiness", () => {
+    it("names what is missing rather than claiming to be fine", () => {
+      const state = readiness();
+
+      // In this test environment there is no model and no search backend.
+      expect(state.ready).toBe(false);
+      expect(state.blockers.join(" ")).toMatch(/MODEL_PROVIDER|MODEL_API_KEY/);
+      expect(state.blockers.join(" ")).toMatch(/SEARCH_PROVIDER/);
+    });
+
+    it("reports degraded on the liveness probe, not ok", async () => {
+      const handle = createHttpService();
+      const payload = (await (await handle(new Request("http://trustlayer.test/health"))).json()) as {
+        status: string;
+        verifier: { ready: boolean; blockers: string[] };
+      };
+
+      expect(payload.status).toBe("degraded");
+      expect(payload.verifier.ready).toBe(false);
+      expect(payload.verifier.blockers.length).toBeGreaterThan(0);
+    });
+
+    it("fails the readiness probe with 503 so a checker can see it", async () => {
+      const handle = createHttpService();
+      const response = await handle(new Request("http://trustlayer.test/health/ready"));
+
+      // Liveness stays 200 — an unconfigured service should not be restarted
+      // in a loop — but readiness says no out loud.
+      expect(response.status).toBe(503);
+      expect((await response.json()) as { ready: boolean }).toMatchObject({ ready: false });
+    });
   });
 
   it("publishes what a caller is buying", async () => {

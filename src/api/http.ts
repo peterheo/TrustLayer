@@ -41,6 +41,50 @@ export interface HttpServiceOptions {
   readonly verifyOptions?: VerifyOptions;
 }
 
+/**
+ * Whether this deployment can actually sell.
+ *
+ * A service that answers `status: ok` while every call fails is the worst
+ * shape a deployment can take on a night when nobody is allowed to touch the
+ * keyboard: it looks alive, it is monitored as alive, and it earns nothing.
+ * So readiness is computed from what the verifier actually needs, and named.
+ */
+export interface Readiness {
+  readonly ready: boolean;
+  readonly modelProvider: string;
+  readonly searchProvider: string;
+  readonly blockers: readonly string[];
+}
+
+export function readiness(): Readiness {
+  const blockers: string[] = [];
+
+  // `createVerifierModel` throws for anything but a configured provider, so
+  // without this the turn never opens and every call is a MODEL_FAILURE.
+  if (config.model.provider !== "anthropic") {
+    blockers.push("no model provider: set MODEL_PROVIDER=anthropic (with MODEL_NAME)");
+  } else if (config.model.apiKey === undefined) {
+    blockers.push("MODEL_API_KEY is not set, so no verification turn can start");
+  }
+
+  // Without a backend `research.search` refuses every call. The protocol can
+  // still run on caller-supplied citations, but nothing independent will ever
+  // be found — and independent support is what a supported verdict requires.
+  if (config.search.provider === "none" || config.search.apiKey === undefined) {
+    blockers.push(
+      "no search backend: set SEARCH_PROVIDER=brave|tavily and SEARCH_API_KEY, " +
+        "or every claim comes back unverified for want of independent evidence",
+    );
+  }
+
+  return {
+    ready: blockers.length === 0,
+    modelProvider: config.model.provider,
+    searchProvider: config.search.provider,
+    blockers,
+  };
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(`${JSON.stringify(body)}\n`, {
     status,
@@ -85,15 +129,27 @@ export function createHttpService(options: HttpServiceOptions = {}) {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
 
+    // Liveness: the process is up. Always 200 so a restart policy does not
+    // kill a service that is merely unconfigured.
     if (path === "/health" && request.method === "GET") {
+      const state = readiness();
       return json({
-        status: "ok",
+        status: state.ready ? "ok" : "degraded",
         service: "trustlayer",
         methodVersion: METHOD_VERSION,
         purpose: TRUST_VERIFY_PURPOSE,
         tenant: TRUSTLAYER_NAMESPACE_ID,
         services: SERVICE_DESCRIPTORS.map((descriptor) => descriptor.name),
+        verifier: state,
       });
+    }
+
+    // Readiness: can this deployment serve a call? 503 when it cannot, so the
+    // answer is visible to anything that checks rather than only to whoever
+    // reads a log line.
+    if (path === "/health/ready" && request.method === "GET") {
+      const state = readiness();
+      return json({ ready: state.ready, blockers: state.blockers }, state.ready ? 200 : 503);
     }
 
     // Discovery: what the services are, what they cost, what they return.
@@ -199,6 +255,17 @@ export async function serve(options: ServeOptions = {}): Promise<{ close: () => 
 
   if (token === undefined || token === "") {
     logger.warn("no TRUSTLAYER_API_TOKEN set: the service endpoints are unauthenticated", {});
+  }
+
+  const state = readiness();
+  if (!state.ready) {
+    // Loud, at error level, naming each thing: a deployment that cannot verify
+    // should not be discoverable only by a caller getting a failure.
+    logger.error("this deployment cannot answer a verification call", {
+      blockers: state.blockers,
+      modelProvider: state.modelProvider,
+      searchProvider: state.searchProvider,
+    });
   }
 
   return {
